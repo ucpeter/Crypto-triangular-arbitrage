@@ -4,8 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-reqwest = { version = "0.12", features = ["json"] }
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# HTTP client for REST API calls
+reqwest = { version = "0.11", features = ["json"] }
+
+# Async runtime for handling concurrent tasks
+tokio = { version = "1.37", features = ["full"] }
+
+# Serialization and deserialization for JSON
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Futures and async utilities
 futures = "0.3"

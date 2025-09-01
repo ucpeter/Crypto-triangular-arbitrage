@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Rust Triangular Arbitrage Scanner</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+    h1 { color: #333; }
+    .panel { background: #fff; padding: 15px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+    table, th, td { border: 1px solid #ddd; }
+    th, td { padding: 8px; text-align: left; }
+    th { background: #007bff; color: white; }
+    button { background: #007bff; color: #fff; border: none; padding: 10px 20px; cursor: pointer; border-radius: 4px; }
+    button:hover { background: #0056b3; }
+  </style>
+</head>
+<body>
+  <h1>Rust Triangular Arbitrage Scanner</h1>
+  <div class="panel">
+    <label>Exchanges:</label><br/>
+    <select id="exchanges" multiple size="5">
+      <option value="binance">Binance</option>
+      <option value="kucoin">KuCoin</option>
+      <option value="bybit">Bybit</option>
+      <option value="gate">Gate.io</option>
+      <option value="kraken">Kraken</option>
+    </select><br/><br/>
+    <label>Min Profit (%):</label>
+    <input type="number" id="min_profit" value="1" step="0.1"><br/><br/>
+    <button onclick="scan()">Scan Now</button>
+  </div>
+
+  <div id="results"></div>
+
+  <script>
+    async function scan() {
+      const selected = Array.from(document.getElementById("exchanges").selectedOptions).map(o => o.value);
+      const min_profit = parseFloat(document.getElementById("min_profit").value);
+
+      const res = await fetch("/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exchanges: selected, min_profit })
+      });
+      const data = await res.json();
+
+      let html = "<table><tr><th>#</th><th>Exchange</th><th>Route</th><th>Profit Before (%)</th><th>Fees (%)</th><th>Profit After (%)</th></tr>";
+      data.results.forEach((row, idx) => {
+        html += `<tr>
+          <td>${idx+1}</td>
+          <td>${row.exchange}</td>
+          <td>${row.route}</td>
+          <td>${row.profit_before.toFixed(2)}</td>
+          <td>${row.fee.toFixed(2)}</td>
+          <td>${row.profit_after.toFixed(2)}</td>
+        </tr>`;
+      });
+      html += "</table>";
+      document.getElementById("results").innerHTML = html;
+    }
+  </script>
+</body>
+  </html>

@@ -1,22 +1,32 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Shared application state
-#[derive(Default)]
-pub struct AppState {
-    /// A simple cache for storing market prices or other shared data
-    pub cache: HashMap<String, f64>,
+pub type PriceMap = HashMap<String, f64>;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ArbResult {
+    pub exchange: String,
+    pub route: String,
+    pub profit_before: f64,
+    pub fee: f64,
+    pub profit_after: f64,
+    pub spread: f64,
 }
 
-/// Represents one arbitrage opportunity found in the scan
-#[derive(Serialize)]
-pub struct ScanResult {
-    /// The triangle pair, e.g., "BTC/USDT -> ETH/USDT -> BTC/ETH"
-    pub pair: String,
-    /// Profit percentage before exchange fees are deducted
-    pub profit_before_fee: f64,
-    /// Estimated fees percentage
-    pub fee: f64,
-    /// Profit percentage after exchange fees
-    pub profit_after_fee: f64,
+impl Default for ArbResult {
+    fn default() -> Self {
+        Self {
+            exchange: String::new(),
+            route: String::new(),
+            profit_before: 0.0,
+            fee: 0.0,
+            profit_after: 0.0,
+            spread: 0.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct AppState {
+    pub last_results: Vec<ArbResult>,
 }

@@ -6,7 +6,7 @@ use crate::exchanges::*;
 use crate::logic::find_triangular_arbitrage;
 use crate::models::ArbitrageResult;
 
-use eframe::{egui, epi};
+use eframe::{egui, App};
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 
@@ -17,12 +17,9 @@ struct AppState {
     min_profit: f64,
 }
 
-impl epi::App for AppState {
-    fn name(&self) -> &str {
-        "Rust Triangular Arbitrage Scanner"
-    }
-
-    fn update(&mut self, ctx: &egui::Context, _frame: &epi::Frame) {
+impl App for AppState {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Left panel for controls
         egui::SidePanel::left("control_panel").show(ctx, |ui| {
             ui.heading("Control Panel");
 
@@ -76,6 +73,7 @@ impl epi::App for AppState {
             }
         });
 
+        // Center panel for results
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Arbitrage Results");
             let results = self.results.lock().unwrap();
@@ -115,5 +113,5 @@ fn main() -> eframe::Result<()> {
         min_profit: 1.0,
     };
     let native_options = eframe::NativeOptions::default();
-    eframe::run_native(Box::new(app), native_options)
-                                                                    }
+    eframe::run_native("Rust Triangular Arbitrage Scanner", native_options, Box::new(|_| Box::new(app)))
+                                                    }

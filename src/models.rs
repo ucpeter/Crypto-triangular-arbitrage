@@ -1,23 +1,15 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
-pub struct ArbitrageResult {
-    pub route: String,
-    pub profit_before: f64,
-    pub fee: f64,
-    pub profit_after: f64,
-    pub spread: f64,
+#[derive(Clone, Default)]
+pub struct AppState {
+    pub last_results: Vec<ArbResult>,
 }
 
-#[derive(Clone, Debug)]
-pub struct MarketPrice {
-    pub symbol: String,
-    pub price: f64,
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ArbResult {
     pub exchange: String,
-}
-
-#[derive(Deserialize)]
-pub struct BinanceTicker {
-    pub symbol: String,
-    pub price: String,
+    pub route: String,           // e.g. "[BINANCE] BTC → ETH → USDT → BTC"
+    pub profit_before: f64,      // %
+    pub fee: f64,                // total fee % assumed for 3 hops
+    pub profit_after: f64,       // %
 }

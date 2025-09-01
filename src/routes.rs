@@ -1,59 +1,37 @@
-use axum::{extract::State, Json};
-use serde::{Deserialize, Serialize};
+use axum::{extract::State, http::StatusCode, response::Html, Json};
+use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::models::{AppState, ArbResult};
-use crate::logic::scan_exchanges;
-use crate::exchanges::{
-    fetch_prices_binance, fetch_prices_kucoin, fetch_prices_bybit,
-    fetch_prices_gateio, fetch_prices_kraken, PriceMap,
-};
+use crate::{exchanges::fetch_prices, logic::find_triangular_arbitrage, models::{AppState, ArbResult}};
 
-pub async fn ui_handler() -> &'static str {
-    include_str!("../static/index.html")
-}
-
-#[derive(Deserialize)]
-pub struct ScanParams {
-    pub min_profit: f64,
-}
-
-#[derive(Serialize)]
-pub struct ScanResponse {
-    pub opportunities: Vec<ArbResult>,
+pub async fn ui_handler() -> Html<&'static str> {
+    Html(include_str!("../static/index.html"))
 }
 
 pub async fn scan_handler(
     State(state): State<Arc<Mutex<AppState>>>,
-    Json(params): Json<ScanParams>,
-) -> Json<ScanResponse> {
-    // Fetch concurrently
-    let (b, k, bb, g, kr) = tokio::join!(
-        fetch_prices_binance(),
-        fetch_prices_kucoin(),
-        fetch_prices_bybit(),
-        fetch_prices_gateio(),
-        fetch_prices_kraken(),
-    );
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let exchanges = payload["exchanges"].as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<&str>>();
+    let min_profit = payload["min_profit"].as_f64().unwrap_or(0.0);
 
-    // Each exchange stays isolated to avoid mixing pairs across venues
-    let mut bundle: Vec<(String, PriceMap)> = Vec::new();
-    if !b.is_empty()  { bundle.push(("binance".to_string(), b)); }
-    if !k.is_empty()  { bundle.push(("kucoin".to_string(), k)); }
-    if !bb.is_empty() { bundle.push(("bybit".to_string(), bb)); }
-    if !g.is_empty()  { bundle.push(("gateio".to_string(), g)); }
-    if !kr.is_empty() { bundle.push(("kraken".to_string(), kr)); }
+    let mut all_results: Vec<ArbResult> = Vec::new();
 
-    let mut results = scan_exchanges(bundle, params.min_profit);
-
-    // keep top 200 for UI
-    if results.len() > 200 { results.truncate(200); }
-
-    {
-        let mut lock = state.lock().await;
-        lock.last_results = results.clone();
+    for &exchange in &exchanges {
+        let prices = fetch_prices(exchange).await;
+        let mut results = find_triangular_arbitrage(&prices, exchange, min_profit);
+        all_results.append(&mut results);
     }
 
-    Json(ScanResponse { opportunities: results })
-}
+    {
+        let mut st = state.lock().await;
+        st.last_results = all_results.clone();
+    }
+
+    Ok(Json(json!({ "results": all_results })))
+    }

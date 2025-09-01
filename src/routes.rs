@@ -1,37 +1,47 @@
-use axum::{extract::State, http::StatusCode, response::Html, Json};
-use serde_json::json;
+use axum::{
+    extract::{Query, State},
+    response::Html,
+    Json,
+};
+use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::{exchanges::fetch_prices, logic::find_triangular_arbitrage, models::{AppState, ArbResult}};
+use crate::logic::find_arbitrage_opportunities;
+use crate::models::{AppState, ScanResult};
 
-pub async fn ui_handler() -> Html<&'static str> {
-    Html(include_str!("../static/index.html"))
+#[derive(Deserialize)]
+pub struct ScanQuery {
+    exchanges: Option<String>,
+    min_profit: Option<f64>,
+}
+
+pub async fn ui_handler() -> Html<String> {
+    // Serve the static index.html file for the UI
+    let html = std::fs::read_to_string("static/index.html")
+        .unwrap_or_else(|_| "<h1>UI not found</h1>".to_string());
+    Html(html)
 }
 
 pub async fn scan_handler(
+    Query(params): Query<ScanQuery>,
     State(state): State<Arc<Mutex<AppState>>>,
-    Json(payload): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let exchanges = payload["exchanges"].as_array()
-        .unwrap_or(&vec![])
-        .iter()
-        .filter_map(|v| v.as_str())
-        .collect::<Vec<&str>>();
-    let min_profit = payload["min_profit"].as_f64().unwrap_or(0.0);
+) -> Json<Vec<ScanResult>> {
+    // Split the exchanges provided in the query, fallback to empty vector if none provided
+    let exchanges_vec: Vec<&str> = params
+        .exchanges
+        .as_deref()
+        .map(|v| v.split(',').collect::<Vec<&str>>())
+        .unwrap_or_else(Vec::new);
 
-    let mut all_results: Vec<ArbResult> = Vec::new();
+    // Get the minimum profit filter (default = 0.0)
+    let min_profit = params.min_profit.unwrap_or(0.0);
 
-    for &exchange in &exchanges {
-        let prices = fetch_prices(exchange).await;
-        let mut results = find_triangular_arbitrage(&prices, exchange, min_profit);
-        all_results.append(&mut results);
-    }
+    // Lock the state for scanning
+    let mut app_state = state.lock().await;
 
-    {
-        let mut st = state.lock().await;
-        st.last_results = all_results.clone();
-    }
+    // Perform the arbitrage scan
+    let results = find_arbitrage_opportunities(&exchanges_vec, min_profit, &mut app_state).await;
 
-    Ok(Json(json!({ "results": all_results })))
-    }
+    Json(results)
+}

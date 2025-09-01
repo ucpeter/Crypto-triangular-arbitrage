@@ -6,14 +6,16 @@ edition = "2021"
 [dependencies]
 # Web server
 axum = "0.7"
-tokio = { version = "1", features = ["full"] }
 tower = "0.4"
 
-# HTTP client + JSON
-reqwest = { version = "0.12", features = ["json"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-futures = "0.3"
+# Async runtime
+tokio = { version = "1.37", features = ["full"] }
 
-# Misc
+# HTTP client + JSON
+reqwest = { version = "0.11", features = ["json", "gzip"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Utilities
+futures = "0.3"
 parking_lot = "0.12"

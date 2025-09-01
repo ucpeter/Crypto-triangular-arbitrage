@@ -18,27 +18,32 @@ use crate::routes::{ui_handler, scan_handler};
 
 #[tokio::main]
 async fn main() {
-    // Shared app state
+    // Shared state
     let state = Arc::new(Mutex::new(AppState::default()));
 
-    // Build router
+    // Router
     let app = Router::new()
         .route("/", get(ui_handler))
         .route("/scan", post(scan_handler))
         .with_state(state);
 
-    // Get port from environment (Render sets $PORT), default to 8080 locally
+    // Read port (default 8080)
     let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
-    let addr: SocketAddr = format!("0.0.0.0:{}", port)
+
+    // Create a persistent String first to avoid dropped temporary
+    let addr_str = format!("0.0.0.0:{}", port);
+    let addr: SocketAddr = addr_str
         .parse()
         .expect("Invalid socket address");
 
-    // Bind and serve
+    // Bind listener
     let listener = TcpListener::bind(addr)
         .await
         .expect("Failed to bind address");
 
-    println!("▶️  Triangular arbitrage server running on http://0.0.0.0:{}", port);
+    println!("▶️ Triangular arbitrage server running on http://0.0.0.0:{}", port);
 
-    serve(listener, app).await.expect("Server failed");
-        }
+    serve(listener, app)
+        .await
+        .expect("Server failed");
+}

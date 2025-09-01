@@ -1,17 +1,23 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
-pub struct Market {
-    pub symbol: String,
-    pub base: String,
-    pub quote: String,
-    pub active: bool,
-    pub spot: bool,
+#[derive(Clone, Debug)]
+pub struct ArbitrageResult {
+    pub route: String,
+    pub profit_before: f64,
+    pub fee: f64,
+    pub profit_after: f64,
+    pub spread: f64,
 }
 
-#[derive(Debug, Serialize)]
-pub struct ArbitrageResult {
+#[derive(Clone, Debug)]
+pub struct MarketPrice {
+    pub symbol: String,
+    pub price: f64,
     pub exchange: String,
-    pub triangle: String,
-    pub profit_percent: f64,
+}
+
+#[derive(Deserialize)]
+pub struct BinanceTicker {
+    pub symbol: String,
+    pub price: String,
 }

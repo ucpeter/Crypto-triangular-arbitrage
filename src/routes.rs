@@ -1,47 +1,62 @@
-use axum::{
-    extract::{Query, State},
-    response::Html,
-    Json,
-};
-use serde::Deserialize;
+use axum::{extract::State, Json, response::Html};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::logic::find_arbitrage_opportunities;
-use crate::models::{AppState, ScanResult};
+use crate::models::{AppState, ArbResult};
+use crate::exchanges::{fetch_binance, fetch_kucoin, fetch_bybit, fetch_gateio, fetch_kraken};
+use crate::logic::scan_all_exchanges;
 
 #[derive(Deserialize)]
-pub struct ScanQuery {
-    exchanges: Option<String>,
-    min_profit: Option<f64>,
+pub struct ScanParams {
+    pub exchanges: Option<Vec<String>>,
+    pub min_profit: Option<f64>,
 }
 
-pub async fn ui_handler() -> Html<String> {
-    // Serve the static index.html file for the UI
-    let html = std::fs::read_to_string("static/index.html")
-        .unwrap_or_else(|_| "<h1>UI not found</h1>".to_string());
-    Html(html)
+#[derive(Serialize)]
+pub struct ScanResponse {
+    pub opportunities: Vec<ArbResult>,
+}
+
+pub async fn ui_handler() -> Html<&'static str> {
+    Html(include_str!("../static/index.html"))
 }
 
 pub async fn scan_handler(
-    Query(params): Query<ScanQuery>,
     State(state): State<Arc<Mutex<AppState>>>,
-) -> Json<Vec<ScanResult>> {
-    // Split the exchanges provided in the query, fallback to empty vector if none provided
-    let exchanges_vec: Vec<&str> = params
-        .exchanges
-        .as_deref()
-        .map(|v| v.split(',').collect::<Vec<&str>>())
-        .unwrap_or_else(Vec::new);
+    Json(params): Json<ScanParams>,
+) -> Json<ScanResponse> {
+    let exchanges = params.exchanges.clone().unwrap_or_else(|| vec![
+        "binance".to_string(),
+        "kucoin".to_string(),
+        "bybit".to_string(),
+        "gateio".to_string(),
+        "kraken".to_string(),
+    ]);
 
-    // Get the minimum profit filter (default = 0.0)
     let min_profit = params.min_profit.unwrap_or(0.0);
 
-    // Lock the state for scanning
-    let mut app_state = state.lock().await;
+    let (b, k, bb, g, kr) = tokio::join!(
+        fetch_binance(),
+        fetch_kucoin(),
+        fetch_bybit(),
+        fetch_gateio(),
+        fetch_kraken()
+    );
 
-    // Perform the arbitrage scan
-    let results = find_arbitrage_opportunities(&exchanges_vec, min_profit, &mut app_state).await;
+    let mut bundle: Vec<(String, crate::models::PriceMap)> = Vec::new();
+    if exchanges.iter().any(|e| e.eq_ignore_ascii_case("binance")) && !b.is_empty() { bundle.push(("binance".to_string(), b)); }
+    if exchanges.iter().any(|e| e.eq_ignore_ascii_case("kucoin")) && !k.is_empty() { bundle.push(("kucoin".to_string(), k)); }
+    if exchanges.iter().any(|e| e.eq_ignore_ascii_case("bybit")) && !bb.is_empty() { bundle.push(("bybit".to_string(), bb)); }
+    if exchanges.iter().any(|e| e.eq_ignore_ascii_case("gateio") || exchanges.iter().any(|ex| ex.eq_ignore_ascii_case("gate"))) && !g.is_empty() { bundle.push(("gateio".to_string(), g)); }
+    if exchanges.iter().any(|e| e.eq_ignore_ascii_case("kraken")) && !kr.is_empty() { bundle.push(("kraken".to_string(), kr)); }
 
-    Json(results)
-}
+    let results = scan_all_exchanges(bundle, min_profit);
+
+    {
+        let mut app = state.lock().await;
+        app.last_results = results.clone();
+    }
+
+    Json(ScanResponse { opportunities: results })
+        }

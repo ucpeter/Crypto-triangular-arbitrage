@@ -7,7 +7,7 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::models::{AppState, ScanRequest, ScanResponse};
+use crate::models::{AppState, ScanRequest};
 use crate::logic::scan_all_exchanges;
 
 pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
@@ -24,32 +24,27 @@ pub async fn scan_handler(
     State(state): State<Arc<Mutex<AppState>>>,
     Json(payload): Json<ScanRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let mut shared_state = state.lock().await;
+    let _shared_state = state.lock().await;
 
-    match scan_all_exchanges(&payload.exchanges, payload.min_profit).await {
-        Ok(results) => {
-            // Store the last results in state
-            shared_state.last_results = Some(results.clone());
+    // Directly run the scan — no `.await` needed
+    let results = scan_all_exchanges(&payload.exchanges, payload.min_profit);
 
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "status": "success",
-                    "count": results.len(),
-                    "results": results
-                })),
-            )
-        }
-        Err(e) => {
-            eprintln!("Scan error: {:?}", e);
-
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "status": "error",
-                    "message": format!("Failed to scan: {}", e)
-                })),
-            )
-        }
+    if results.is_empty() {
+        return (
+            StatusCode::OK,
+            Json(json!({
+                "status": "no_opportunities",
+                "message": "No arbitrage opportunities found for the selected exchanges."
+            })),
+        );
     }
-    }
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "success",
+            "count": results.len(),
+            "results": results
+        })),
+    )
+                       }

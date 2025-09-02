@@ -84,10 +84,7 @@ pub fn tri_arb_single_exchange(
     results
 }
 
-pub fn scan_all_exchanges(
-    bundle: Vec<(String, PriceMap)>,
-    min_profit_after: f64,
-) -> Vec<ArbResult> {
+pub fn scan_all_exchanges(bundle: Vec<(String, PriceMap)>, min_profit_after: f64) -> Vec<ArbResult> {
     let default_fee = 0.10;
     let mut out: Vec<ArbResult> = Vec::new();
 

@@ -1,32 +1,21 @@
 use crate::models::{ArbResult, PriceMap};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-/// Build price graph with both direct and inverse quotes
 fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
-    let mut g = HashMap::new();
-
+    let mut g: HashMap<String, HashMap<String, f64>> = HashMap::new();
     for (pair, price) in prices {
-        if *price <= 0.0 || !price.is_finite() || *price < 0.0000001 {
+        if *price <= 0.0 {
             continue;
         }
-
         let parts: Vec<&str> = pair.split('/').collect();
         if parts.len() != 2 {
             continue;
         }
-
         let base = parts[0].to_string();
         let quote = parts[1].to_string();
-
-        g.entry(base.clone())
-            .or_default()
-            .insert(quote.clone(), *price);
-
-        g.entry(quote.clone())
-            .or_default()
-            .insert(base.clone(), 1.0 / *price);
+        g.entry(base.clone()).or_default().insert(quote.clone(), *price);
+        g.entry(quote.clone()).or_default().insert(base.clone(), 1.0 / *price);
     }
-
     g
 }
 

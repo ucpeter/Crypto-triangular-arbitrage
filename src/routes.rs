@@ -1,42 +1,41 @@
 use axum::{extract::State, response::Html, Json};
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use reqwest::Client;
+use std::collections::HashSet;
 
 use crate::{
-    models::{AppState, ScanRequest, ScanResult},
-    exchanges::*,
+    models::{AppState, ScanRequest, ScanResult, PriceMap},
+    exchanges::{fetch_binance, fetch_kucoin, fetch_bybit, fetch_gateio, fetch_kraken},
     logic::scan_all_exchanges,
 };
 
-/// Serve the UI
 pub async fn ui_handler() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
 }
 
-/// Handle scan requests
 pub async fn scan_handler(
-    State(state): State<Arc<Mutex<AppState>>>,
+    State(_state): State<Arc<Mutex<AppState>>>,
     Json(payload): Json<ScanRequest>,
 ) -> Json<Vec<ScanResult>> {
     let client = Client::new();
-    let mut results = Vec::new();
-
     let exchanges = payload.exchanges.clone();
     let min_profit = payload.min_profit;
 
-    // Build bundles: (exchange name, prices, spot pairs)
-    let mut bundle = Vec::new();
+    let mut bundle: Vec<(String, PriceMap, HashSet<String>)> = Vec::new();
 
-    for ex in exchanges {
+    for ex in exchanges.into_iter() {
         let (prices, spot_pairs) = match ex.as_str() {
             "binance" => fetch_binance(&client).await,
             "kucoin" => fetch_kucoin(&client).await,
             "bybit" => fetch_bybit(&client).await,
             "gateio" => fetch_gateio(&client).await,
             "kraken" => fetch_kraken(&client).await,
-            _ => (Default::default(), Default::default()),
+            other => {
+                // unknown exchange - skip
+                (Default::default(), Default::default())
+            }
         };
 
         if !prices.is_empty() {
@@ -46,8 +45,7 @@ pub async fn scan_handler(
 
     let arb_results = scan_all_exchanges(bundle, min_profit);
 
-    // Map to ScanResult for JSON response
-    results = arb_results
+    let results: Vec<ScanResult> = arb_results
         .into_iter()
         .map(|r| ScanResult {
             exchange: r.exchange,
@@ -59,4 +57,4 @@ pub async fn scan_handler(
         .collect();
 
     Json(results)
-           }
+            }

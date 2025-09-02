@@ -7,7 +7,9 @@ use axum::{routing::{get, post}, Router};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tower_http::cors::{Any, CorsLayer};
+use tokio::net::TcpListener;
+use tower_http::cors::{CorsLayer, Any};
+
 use crate::models::AppState;
 use crate::routes::{ui_handler, scan_handler};
 
@@ -23,18 +25,20 @@ async fn main() {
     let app = Router::new()
         .route("/", get(ui_handler))
         .route("/scan", post(scan_handler))
-        .with_state(shared_state)
-        .layer(cors);
+        // apply CORS layer *before* attaching state
+        .layer(cors)
+        .with_state(shared_state);
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
-    let addr: SocketAddr = format!("0.0.0.0:{}", port)
-        .parse()
-        .expect("invalid addr");
+    let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().expect("invalid addr");
 
     println!("▶️  Starting server on http://0.0.0.0:{}", port);
 
-    // Use Axum's modern bind/serve approach
-    axum::serve(tokio::net::TcpListener::bind(addr).await.unwrap(), app)
+    let listener = TcpListener::bind(addr)
+        .await
+        .expect("Failed to bind address");
+
+    axum::serve(listener, app)
         .await
         .expect("server error");
 }

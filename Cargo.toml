@@ -1,15 +1,22 @@
 [package]
-name = "triangular_arbitrage"
+name = "triangular_arbitrage_rust_web"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Core async + HTTP stack
+tokio = { version = "1.40", features = ["full"] }
 axum = "0.7"
-tokio = { version = "1.37.0", features = ["full"] }
-reqwest = { version = "0.11", features = ["json", "gzip"] }
+hyper = "1.2"
+tower = "0.5"
+tower-http = { version = "0.5", features = ["cors"] }
+
+# JSON + serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# HTTP requests for price fetching
+reqwest = { version = "0.12", features = ["json"] }
+
+# Utilities
 futures = "0.3"
-tower = "0.4"
-tower-http = { version = "0.4", features = ["cors"] }
-parking_lot = "0.12"

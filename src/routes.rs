@@ -1,60 +1,55 @@
-use axum::{extract::State, response::Html, Json};
-use serde::{Deserialize, Serialize};
+use axum::{
+    extract::State,
+    response::Json,
+    http::StatusCode,
+};
+use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use reqwest::Client;
-use std::collections::HashSet;
 
-use crate::{
-    models::{AppState, ScanRequest, ScanResult, PriceMap},
-    exchanges::{fetch_binance, fetch_kucoin, fetch_bybit, fetch_gateio, fetch_kraken},
-    logic::scan_all_exchanges,
-};
+use crate::models::{AppState, ScanRequest, ScanResponse};
+use crate::logic::scan_all_exchanges;
 
-pub async fn ui_handler() -> Html<&'static str> {
-    Html(include_str!("../static/index.html"))
+pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::OK,
+        Json(json!({
+            "message": "Triangular Arbitrage Scanner API is running",
+            "usage": "POST /scan with { exchanges: [], min_profit: number }"
+        })),
+    )
 }
 
 pub async fn scan_handler(
-    State(_state): State<Arc<Mutex<AppState>>>,
+    State(state): State<Arc<Mutex<AppState>>>,
     Json(payload): Json<ScanRequest>,
-) -> Json<Vec<ScanResult>> {
-    let client = Client::new();
-    let exchanges = payload.exchanges.clone();
-    let min_profit = payload.min_profit;
+) -> (StatusCode, Json<serde_json::Value>) {
+    let mut shared_state = state.lock().await;
 
-    let mut bundle: Vec<(String, PriceMap, HashSet<String>)> = Vec::new();
+    match scan_all_exchanges(&payload.exchanges, payload.min_profit).await {
+        Ok(results) => {
+            // Store the last results in state
+            shared_state.last_results = Some(results.clone());
 
-    for ex in exchanges.into_iter() {
-        let (prices, spot_pairs) = match ex.as_str() {
-            "binance" => fetch_binance(&client).await,
-            "kucoin" => fetch_kucoin(&client).await,
-            "bybit" => fetch_bybit(&client).await,
-            "gateio" => fetch_gateio(&client).await,
-            "kraken" => fetch_kraken(&client).await,
-            other => {
-                // unknown exchange - skip
-                (Default::default(), Default::default())
-            }
-        };
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "status": "success",
+                    "count": results.len(),
+                    "results": results
+                })),
+            )
+        }
+        Err(e) => {
+            eprintln!("Scan error: {:?}", e);
 
-        if !prices.is_empty() {
-            bundle.push((ex.clone(), prices, spot_pairs));
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "status": "error",
+                    "message": format!("Failed to scan: {}", e)
+                })),
+            )
         }
     }
-
-    let arb_results = scan_all_exchanges(bundle, min_profit);
-
-    let results: Vec<ScanResult> = arb_results
-        .into_iter()
-        .map(|r| ScanResult {
-            exchange: r.exchange,
-            route: r.route,
-            profit_before: r.profit_before,
-            fee: r.fee,
-            profit_after: r.profit_after,
-        })
-        .collect();
-
-    Json(results)
-            }
+    }

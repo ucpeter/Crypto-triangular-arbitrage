@@ -1,92 +1,148 @@
-use std::collections::{HashMap, HashSet};
+use crate::models::PriceMap;
 use reqwest::Client;
 use serde_json::Value;
+use std::collections::HashMap;
 
-pub type PriceMap = HashMap<String, f64>;
+/// Normalize pair strings into BASE/QUOTE format
+fn known_quotes() -> &'static [&'static str] {
+    &[
+        "USDT","USDC","BUSD","USD","DAI","BTC","ETH","BNB","EUR","GBP","TRY","AUD","BRL","JPY","KRW",
+    ]
+}
 
-/// Helper to standardize pair strings like "BTC/USDT"
-fn format_pair(base: &str, quote: &str) -> String {
+fn normalize_pair_raw(sym: &str) -> Option<(String,String)> {
+    if sym.contains('/') {
+        let mut s = sym.split('/');
+        return Some((s.next()?.to_string(), s.next()?.to_string()));
+    }
+    if sym.contains('-') {
+        let mut s = sym.split('-');
+        return Some((s.next()?.to_string(), s.next()?.to_string()));
+    }
+    if sym.contains('_') {
+        let mut s = sym.split('_');
+        return Some((s.next()?.to_string(), s.next()?.to_string()));
+    }
+    let u = sym.to_uppercase();
+    for q in known_quotes() {
+        if u.ends_with(q) && u.len() > q.len() {
+            let base = &u[..u.len() - q.len()];
+            return Some((base.to_string(), (*q).to_string()));
+        }
+    }
+    None
+}
+
+fn key(base: &str, quote: &str) -> String {
     format!("{}/{}", base.to_uppercase(), quote.to_uppercase())
 }
 
-/// Fetch Binance spot pairs and prices
-pub async fn fetch_binance(client: &Client) -> (PriceMap, HashSet<String>) {
-    let mut prices = PriceMap::new();
-    let mut pairs = HashSet::new();
-
-    if let Ok(resp) = client
-        .get("https://api.binance.com/api/v3/exchangeInfo")
-        .send()
-        .await
-    {
-        if let Ok(data) = resp.json::<Value>().await {
-            if let Some(symbols) = data.get("symbols").and_then(|s| s.as_array()) {
-                for s in symbols {
-                    if let (Some(base), Some(quote)) = (s.get("baseAsset"), s.get("quoteAsset")) {
-                        pairs.insert(format_pair(base.as_str().unwrap(), quote.as_str().unwrap()));
-                    }
-                }
-            }
-        }
-    }
-
-    if let Ok(resp) = client
-        .get("https://api.binance.com/api/v3/ticker/price")
-        .send()
-        .await
-    {
-        if let Ok(data) = resp.json::<Vec<Value>>().await {
-            for item in data {
-                if let (Some(symbol), Some(price)) =
-                    (item.get("symbol"), item.get("price").and_then(|p| p.as_str()))
-                {
-                    // Try to split into base/quote for pair formatting
-                    let (base, quote) = symbol.as_str().unwrap().split_at(symbol.as_str().unwrap().len() - 4);
-                    if let Ok(p) = price.parse::<f64>() {
-                        prices.insert(format_pair(base, quote), p);
-                    }
-                }
-            }
-        }
-    }
-
-    (prices, pairs)
+async fn fetch_json(client: &Client, url: &str) -> Option<Value> {
+    client.get(url).send().await.ok()?.json::<Value>().await.ok()
 }
 
-/// KuCoin fetcher
-pub async fn fetch_kucoin(client: &Client) -> (PriceMap, HashSet<String>) {
-    let mut prices = PriceMap::new();
-    let mut pairs = HashSet::new();
-
-    if let Ok(resp) = client
-        .get("https://api.kucoin.com/api/v1/symbols")
-        .send()
-        .await
-    {
-        if let Ok(data) = resp.json::<Value>().await {
-            if let Some(symbols) = data.get("data").and_then(|s| s.as_array()) {
-                for s in symbols {
-                    if let (Some(base), Some(quote)) = (s.get("baseCurrency"), s.get("quoteCurrency")) {
-                        pairs.insert(format_pair(base.as_str().unwrap(), quote.as_str().unwrap()));
+pub async fn fetch_binance() -> PriceMap {
+    let client = Client::new();
+    let mut map: PriceMap = HashMap::new();
+    if let Some(Value::Array(arr)) = fetch_json(&client, "https://api.binance.com/api/v3/ticker/price").await {
+        for e in arr {
+            if let (Some(sym), Some(price_s)) = (e.get("symbol").and_then(|v| v.as_str()), e.get("price").and_then(|v| v.as_str())) {
+                if let Ok(p) = price_s.parse::<f64>() {
+                    if let Some((b,q)) = normalize_pair_raw(sym) {
+                        map.insert(key(&b,&q), p);
                     }
                 }
             }
         }
     }
+    map
+}
 
-    if let Ok(resp) = client
-        .get("https://api.kucoin.com/api/v1/market/allTickers")
-        .send()
-        .await
-    {
-        if let Ok(data) = resp.json::<Value>().await {
-            if let Some(tickers) = data["data"]["ticker"].as_array() {
-                for t in tickers {
-                    if let (Some(symbol), Some(price)) = (t.get("symbol"), t.get("last")) {
-                        let parts: Vec<&str> = symbol.as_str().unwrap().split('-').collect();
-                        if parts.len() == 2 {
-                            if let Ok(p) = price.as_str().unwrap().parse::<f64>() {
-                                prices.insert(format_pair(parts[0], parts[1]), p);
+pub async fn fetch_kucoin() -> PriceMap {
+    let client = Client::new();
+    let mut map: PriceMap = HashMap::new();
+    if let Some(json) = fetch_json(&client, "https://api.kucoin.com/api/v1/market/allTickers").await {
+        if let Some(arr) = json.get("data").and_then(|d| d.get("ticker")).and_then(|t| t.as_array()) {
+            for e in arr {
+                if let (Some(sym), Some(last_s)) = (e.get("symbol").and_then(|v| v.as_str()), e.get("last").and_then(|v| v.as_str())) {
+                    if let Ok(p) = last_s.parse::<f64>() {
+                        if let Some((b,q)) = normalize_pair_raw(sym) {
+                            map.insert(key(&b,&q), p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
+pub async fn fetch_bybit() -> PriceMap {
+    let client = Client::new();
+    let mut map: PriceMap = HashMap::new();
+    if let Some(json) = fetch_json(&client, "https://api.bybit.com/v5/market/tickers?category=spot").await {
+        if let Some(list) = json.get("result").and_then(|r| r.get("list")).and_then(|l| l.as_array()) {
+            for e in list {
+                if let (Some(sym), Some(last_s)) = (e.get("symbol").and_then(|v| v.as_str()), e.get("lastPrice").and_then(|v| v.as_str())) {
+                    if let Ok(p) = last_s.parse::<f64>() {
+                        if let Some((b,q)) = normalize_pair_raw(sym) {
+                            map.insert(key(&b,&q), p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
+pub async fn fetch_gateio() -> PriceMap {
+    let client = Client::new();
+    let mut map: PriceMap = HashMap::new();
+    if let Some(Value::Array(arr)) = fetch_json(&client, "https://api.gateio.ws/api/v4/spot/tickers").await {
+        for e in arr {
+            if let (Some(sym), Some(last_s)) = (e.get("currency_pair").and_then(|v| v.as_str()), e.get("last").and_then(|v| v.as_str())) {
+                if let Ok(p) = last_s.parse::<f64>() {
+                    if let Some((b,q)) = normalize_pair_raw(sym) {
+                        map.insert(key(&b,&q), p);
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
+pub async fn fetch_kraken() -> PriceMap {
+    let client = Client::new();
+    let mut map: PriceMap = HashMap::new();
+
+    if let Some(json) = fetch_json(&client, "https://api.kraken.com/0/public/AssetPairs").await {
+        if let Some(obj) = json.get("result").and_then(|r| r.as_object()) {
+            let mut alt: HashMap<String,String> = HashMap::new();
+            for (k,v) in obj {
+                if let Some(a) = v.get("altname").and_then(|x| x.as_str()) {
+                    alt.insert(k.clone(), a.to_string());
+                }
+            }
+            if !alt.is_empty() {
+                let keys: Vec<String> = alt.keys().cloned().collect();
+                const CHUNK: usize = 100;
+                for chunk in keys.chunks(CHUNK) {
+                    let joined = chunk.join(",");
+                    let url = format!("https://api.kraken.com/0/public/Ticker?pair={}", joined);
+                    if let Some(tjson) = fetch_json(&client, &url).await {
+                        if let Some(res) = tjson.get("result").and_then(|r| r.as_object()) {
+                            for (k, d) in res {
+                                if let Some(last_s) = d.get("c").and_then(|arr| arr.get(0)).and_then(|v| v.as_str()) {
+                                    if let Ok(p) = last_s.parse::<f64>() {
+                                        if let Some(altname) = alt.get(k) {
+                                            if let Some((b,q)) = normalize_pair_raw(altname) {
+                                                map.insert(key(&b,&q), p);
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -94,135 +150,5 @@ pub async fn fetch_kucoin(client: &Client) -> (PriceMap, HashSet<String>) {
             }
         }
     }
-
-    (prices, pairs)
-}
-
-/// Bybit fetcher
-pub async fn fetch_bybit(client: &Client) -> (PriceMap, HashSet<String>) {
-    let mut prices = PriceMap::new();
-    let mut pairs = HashSet::new();
-
-    if let Ok(resp) = client
-        .get("https://api.bybit.com/v5/market/instruments-info?category=spot")
-        .send()
-        .await
-    {
-        if let Ok(data) = resp.json::<Value>().await {
-            if let Some(list) = data["result"]["list"].as_array() {
-                for l in list {
-                    if let (Some(base), Some(quote)) = (l.get("baseCoin"), l.get("quoteCoin")) {
-                        pairs.insert(format_pair(base.as_str().unwrap(), quote.as_str().unwrap()));
-                    }
-                }
-            }
-        }
-    }
-
-    if let Ok(resp) = client
-        .get("https://api.bybit.com/v5/market/tickers?category=spot")
-        .send()
-        .await
-    {
-        if let Ok(data) = resp.json::<Value>().await {
-            if let Some(list) = data["result"]["list"].as_array() {
-                for l in list {
-                    if let (Some(symbol), Some(price)) = (l.get("symbol"), l.get("lastPrice")) {
-                        let parts: Vec<&str> = symbol.as_str().unwrap().split('/').collect();
-                        if parts.len() == 2 {
-                            if let Ok(p) = price.as_str().unwrap().parse::<f64>() {
-                                prices.insert(format_pair(parts[0], parts[1]), p);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    (prices, pairs)
-}
-
-/// Gate.io fetcher
-pub async fn fetch_gateio(client: &Client) -> (PriceMap, HashSet<String>) {
-    let mut prices = PriceMap::new();
-    let mut pairs = HashSet::new();
-
-    if let Ok(resp) = client
-        .get("https://api.gateio.ws/api/v4/spot/currency_pairs")
-        .send()
-        .await
-    {
-        if let Ok(data) = resp.json::<Vec<Value>>().await {
-            for item in data {
-                if let (Some(base), Some(quote)) = (item.get("base"), item.get("quote")) {
-                    pairs.insert(format_pair(base.as_str().unwrap(), quote.as_str().unwrap()));
-                }
-            }
-        }
-    }
-
-    if let Ok(resp) = client
-        .get("https://api.gateio.ws/api/v4/spot/tickers")
-        .send()
-        .await
-    {
-        if let Ok(data) = resp.json::<Vec<Value>>().await {
-            for item in data {
-                if let (Some(symbol), Some(price)) = (item.get("currency_pair"), item.get("last")) {
-                    let parts: Vec<&str> = symbol.as_str().unwrap().split('_').collect();
-                    if parts.len() == 2 {
-                        if let Ok(p) = price.as_str().unwrap().parse::<f64>() {
-                            prices.insert(format_pair(parts[0], parts[1]), p);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    (prices, pairs)
-}
-
-/// Kraken fetcher
-pub async fn fetch_kraken(client: &Client) -> (PriceMap, HashSet<String>) {
-    let mut prices = PriceMap::new();
-    let mut pairs = HashSet::new();
-
-    if let Ok(resp) = client
-        .get("https://api.kraken.com/0/public/AssetPairs")
-        .send()
-        .await
-    {
-        if let Ok(data) = resp.json::<Value>().await {
-            if let Some(result) = data["result"].as_object() {
-                for (symbol, pair) in result {
-                    if let (Some(base), Some(quote)) = (pair.get("base"), pair.get("quote")) {
-                        pairs.insert(format_pair(base.as_str().unwrap(), quote.as_str().unwrap()));
-                    }
-                }
-            }
-        }
-    }
-
-    if let Ok(resp) = client
-        .get("https://api.kraken.com/0/public/Ticker?pair=BTCUSD,ETHUSD")
-        .send()
-        .await
-    {
-        if let Ok(data) = resp.json::<Value>().await {
-            if let Some(result) = data["result"].as_object() {
-                for (symbol, ticker) in result {
-                    if let Some(price) = ticker["c"][0].as_str() {
-                        if let Ok(p) = price.parse::<f64>() {
-                            // Simplified; use actual base/quote parsing logic if needed
-                            prices.insert(symbol.to_uppercase(), p);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    (prices, pairs)
-                                                                }
+    map
+                     }

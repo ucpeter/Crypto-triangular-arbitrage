@@ -1,5 +1,5 @@
 [package]
-name = "triangular_arbitrage_rust_web"
+name = "triangular_arbitrage"
 version = "0.1.0"
 edition = "2021"
 

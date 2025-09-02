@@ -1,44 +1,40 @@
-use axum::{
-    routing::{get, post},
-    Router,
-};
-use axum_server::Server;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use tower_http::cors::{CorsLayer, Any};
-
-mod routes;
-mod logic;
 mod models;
 mod exchanges;
+mod logic;
+mod routes;
 
-use routes::{ui_handler, scan_handler};
-use models::AppState;
+use axum::{routing::{get, post}, Router};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tower_http::cors::{Any, CorsLayer};
+use crate::models::AppState;
+use crate::routes::{ui_handler, scan_handler};
 
 #[tokio::main]
 async fn main() {
-    // Shared state for the scanner
-    let shared_state = Arc::new(AppState::default());
+    let shared_state = Arc::new(Mutex::new(AppState::default()));
 
-    // Enable CORS for browser access
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // Build the Axum app with routes and layers
     let app = Router::new()
         .route("/", get(ui_handler))
         .route("/scan", post(scan_handler))
         .with_state(shared_state)
-        .layer(cors.clone());
+        .layer(cors);
 
-    // Start the server on port 8080
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
-    println!("Server running at http://{}", addr);
+    let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let addr: SocketAddr = format!("0.0.0.0:{}", port)
+        .parse()
+        .expect("invalid addr");
 
-    Server::bind(&addr)
-        .serve(app.into_make_service())
+    println!("▶️  Starting server on http://0.0.0.0:{}", port);
+
+    // Use Axum's modern bind/serve approach
+    axum::serve(tokio::net::TcpListener::bind(addr).await.unwrap(), app)
         .await
-        .unwrap();
+        .expect("server error");
 }

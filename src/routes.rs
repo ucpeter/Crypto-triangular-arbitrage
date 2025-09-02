@@ -1,62 +1,62 @@
-use axum::{extract::State, Json, response::Html};
-use serde::{Deserialize, Serialize};
+use axum::{extract::State, response::Html, Json};
+use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use reqwest::Client;
 
-use crate::models::{AppState, ArbResult};
-use crate::exchanges::{fetch_binance, fetch_kucoin, fetch_bybit, fetch_gateio, fetch_kraken};
-use crate::logic::scan_all_exchanges;
+use crate::{
+    models::{AppState, ScanRequest, ScanResult},
+    exchanges::*,
+    logic::scan_all_exchanges,
+};
 
-#[derive(Deserialize)]
-pub struct ScanParams {
-    pub exchanges: Option<Vec<String>>,
-    pub min_profit: Option<f64>,
-}
-
-#[derive(Serialize)]
-pub struct ScanResponse {
-    pub opportunities: Vec<ArbResult>,
-}
-
+/// Serve the UI
 pub async fn ui_handler() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
 }
 
+/// Handle scan requests
 pub async fn scan_handler(
     State(state): State<Arc<Mutex<AppState>>>,
-    Json(params): Json<ScanParams>,
-) -> Json<ScanResponse> {
-    let exchanges = params.exchanges.clone().unwrap_or_else(|| vec![
-        "binance".to_string(),
-        "kucoin".to_string(),
-        "bybit".to_string(),
-        "gateio".to_string(),
-        "kraken".to_string(),
-    ]);
+    Json(payload): Json<ScanRequest>,
+) -> Json<Vec<ScanResult>> {
+    let client = Client::new();
+    let mut results = Vec::new();
 
-    let min_profit = params.min_profit.unwrap_or(0.0);
+    let exchanges = payload.exchanges.clone();
+    let min_profit = payload.min_profit;
 
-    let (b, k, bb, g, kr) = tokio::join!(
-        fetch_binance(),
-        fetch_kucoin(),
-        fetch_bybit(),
-        fetch_gateio(),
-        fetch_kraken()
-    );
+    // Build bundles: (exchange name, prices, spot pairs)
+    let mut bundle = Vec::new();
 
-    let mut bundle: Vec<(String, crate::models::PriceMap)> = Vec::new();
-    if exchanges.iter().any(|e| e.eq_ignore_ascii_case("binance")) && !b.is_empty() { bundle.push(("binance".to_string(), b)); }
-    if exchanges.iter().any(|e| e.eq_ignore_ascii_case("kucoin")) && !k.is_empty() { bundle.push(("kucoin".to_string(), k)); }
-    if exchanges.iter().any(|e| e.eq_ignore_ascii_case("bybit")) && !bb.is_empty() { bundle.push(("bybit".to_string(), bb)); }
-    if exchanges.iter().any(|e| e.eq_ignore_ascii_case("gateio") || exchanges.iter().any(|ex| ex.eq_ignore_ascii_case("gate"))) && !g.is_empty() { bundle.push(("gateio".to_string(), g)); }
-    if exchanges.iter().any(|e| e.eq_ignore_ascii_case("kraken")) && !kr.is_empty() { bundle.push(("kraken".to_string(), kr)); }
+    for ex in exchanges {
+        let (prices, spot_pairs) = match ex.as_str() {
+            "binance" => fetch_binance(&client).await,
+            "kucoin" => fetch_kucoin(&client).await,
+            "bybit" => fetch_bybit(&client).await,
+            "gateio" => fetch_gateio(&client).await,
+            "kraken" => fetch_kraken(&client).await,
+            _ => (Default::default(), Default::default()),
+        };
 
-    let results = scan_all_exchanges(bundle, min_profit);
-
-    {
-        let mut app = state.lock().await;
-        app.last_results = results.clone();
+        if !prices.is_empty() {
+            bundle.push((ex.clone(), prices, spot_pairs));
+        }
     }
 
-    Json(ScanResponse { opportunities: results })
-        }
+    let arb_results = scan_all_exchanges(bundle, min_profit);
+
+    // Map to ScanResult for JSON response
+    results = arb_results
+        .into_iter()
+        .map(|r| ScanResult {
+            exchange: r.exchange,
+            route: r.route,
+            profit_before: r.profit_before,
+            fee: r.fee,
+            profit_after: r.profit_after,
+        })
+        .collect();
+
+    Json(results)
+           }

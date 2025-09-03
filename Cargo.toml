@@ -4,19 +4,21 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Core async + HTTP stack
-tokio = { version = "1.40", features = ["full"] }
+# Web framework
 axum = "0.7"
-hyper = "1.2"
-tower = "0.5"
-tower-http = { version = "0.5", features = ["cors"] }
 
-# JSON + serialization
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization / Deserialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# HTTP requests for price fetching
-reqwest = { version = "0.12", features = ["json"] }
-
-# Utilities
+# Concurrency utilities
 futures = "0.3"
+
+# HTTP middleware (CORS + static file serving)
+tower-http = { version = "0.5", features = ["cors", "fs"] }

@@ -1,25 +1,27 @@
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+
+pub type PriceMap = HashMap<String, f64>; // <--- Add this line
 
 #[derive(Default)]
 pub struct AppState {
-    /// Stores the latest scan results for reuse or API UI retrieval
     pub last_results: Option<Vec<ArbResult>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ArbResult {
-    pub exchange: String,       // Exchange name
-    pub route: String,          // The triangular route like A → B → C → A
-    pub profit_before: f64,     // Profit before fees
-    pub fee: f64,               // Total fees in percentage
-    pub profit_after: f64,      // Profit after fees
-    pub spread: f64,            // Spread percentage
+    pub exchange: String,
+    pub route: String,
+    pub profit_before: f64,
+    pub fee: f64,
+    pub profit_after: f64,
+    pub spread: f64,
 }
 
 #[derive(Deserialize)]
 pub struct ScanRequest {
-    pub exchanges: Vec<String>, // List of exchanges to scan
-    pub min_profit: f64,        // Minimum profit filter
+    pub exchanges: Vec<String>,
+    pub min_profit: f64,
 }
 
 #[derive(Serialize)]

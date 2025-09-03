@@ -1,93 +1,158 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
   <title>Triangular Arbitrage Scanner</title>
-  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
   <style>
-    body { font-size: 0.85rem; } /* Make all text slightly smaller */
-    table { font-size: 0.8rem; } /* Table text even smaller */
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f5f7fa;
+      margin: 0;
+      padding: 0;
+    }
+    header {
+      background: #1a73e8;
+      color: white;
+      padding: 10px 20px;
+      text-align: center;
+    }
+    .container {
+      padding: 20px;
+      max-width: 1200px;
+      margin: auto;
+    }
+    h2 {
+      font-size: 18px;
+      margin-bottom: 10px;
+      color: #333;
+    }
+    label {
+      font-size: 14px;
+      display: block;
+      margin-top: 10px;
+      color: #444;
+    }
+    select, input, button {
+      padding: 8px;
+      margin-top: 5px;
+      border-radius: 5px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+    }
+    button {
+      background-color: #1a73e8;
+      color: white;
+      font-weight: bold;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #1669c1;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      font-size: 13px;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      text-align: center;
+      padding: 6px;
+    }
+    th {
+      background-color: #1a73e8;
+      color: white;
+      font-size: 13px;
+    }
+    tr:nth-child(even) {
+      background-color: #f2f2f2;
+    }
+    .status {
+      margin-top: 15px;
+      font-size: 13px;
+      color: #555;
+    }
   </style>
+</head>
+<body>
+  <header>
+    <h1>Triangular Arbitrage Scanner</h1>
+  </header>
+  <div class="container">
+    <h2>Scanner Controls</h2>
+    <label for="exchanges">Select Exchanges (multi-select):</label>
+    <select id="exchanges" multiple size="5" style="width: 300px;">
+      <option value="binance">Binance</option>
+      <option value="kucoin">KuCoin</option>
+      <option value="kraken">Kraken</option>
+      <option value="gateio">Gate.io</option>
+      <option value="bybit">Bybit</option>
+    </select>
+
+    <label for="min_profit">Minimum Profit %:</label>
+    <input id="min_profit" type="number" value="0" step="0.1">
+
+    <br><br>
+    <button onclick="runScan()">Scan Now</button>
+
+    <div class="status" id="status"></div>
+
+    <table id="resultsTable">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Triangle</th>
+          <th>Pairs</th>
+          <th>Profit Before %</th>
+          <th>Fee %</th>
+          <th>Profit After %</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
   <script>
-    async function scan() {
-      const exchanges = document.getElementById("exchanges").value
-        .split(",")
-        .map(e => e.trim())
-        .filter(e => e !== "");
-      const minProfit = parseFloat(document.getElementById("minProfit").value || "0");
+    async function runScan() {
+      const exchanges = Array.from(document.getElementById("exchanges").selectedOptions).map(o => o.value);
+      const minProfit = parseFloat(document.getElementById("min_profit").value);
+      const status = document.getElementById("status");
+      const tbody = document.querySelector("#resultsTable tbody");
 
-      const button = document.getElementById("scanButton");
-      const resultsDiv = document.getElementById("results");
-
-      button.innerText = "Scanning...";
-      resultsDiv.innerHTML = "";
+      status.textContent = "🔍 Scanning...";
+      tbody.innerHTML = "";
 
       try {
-        const response = await fetch("/scan", {
+        const res = await fetch("/scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ exchanges, min_profit: minProfit })
         });
 
-        const data = await response.json();
-
-        if (data.status === "success" && data.results.length > 0) {
-          let rows = "";
-          data.results.forEach((r, idx) => {
-            rows += `
-              <tr class="border-b hover:bg-gray-100">
-                <td class="px-2 py-1">${idx + 1}</td>
-                <td class="px-2 py-1">${r.route}</td>
-                <td class="px-2 py-1">${r.spread.toFixed(2)}%</td>
-                <td class="px-2 py-1">${r.profit_before.toFixed(2)}%</td>
-                <td class="px-2 py-1">${r.fee.toFixed(2)}%</td>
-                <td class="px-2 py-1 text-green-600 font-semibold">${r.profit_after.toFixed(2)}%</td>
-              </tr>`;
+        const data = await res.json();
+        if (data.status === "success") {
+          status.textContent = `✅ Found ${data.count} opportunities`;
+          data.results.forEach((row, i) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+              <td>${i + 1}</td>
+              <td>${row.route}</td>
+              <td>${row.pairs || "-"}</td>
+              <td>${row.profit_before.toFixed(2)}</td>
+              <td>${row.fee.toFixed(2)}</td>
+              <td>${row.profit_after.toFixed(2)}</td>
+            `;
+            tbody.appendChild(tr);
           });
-
-          resultsDiv.innerHTML = `
-            <table class="min-w-full bg-white border rounded shadow-md">
-              <thead class="bg-gray-800 text-white">
-                <tr>
-                  <th class="px-2 py-1">#</th>
-                  <th class="px-2 py-1">Triangle</th>
-                  <th class="px-2 py-1">Spread</th>
-                  <th class="px-2 py-1">Profit Before</th>
-                  <th class="px-2 py-1">Fees</th>
-                  <th class="px-2 py-1">Profit After</th>
-                </tr>
-              </thead>
-              <tbody>${rows}</tbody>
-            </table>`;
         } else {
-          resultsDiv.innerHTML = `
-            <p class="text-gray-600 mt-4">No opportunities found for the selected parameters.</p>`;
+          status.textContent = `⚠️ ${data.message}`;
         }
       } catch (err) {
-        resultsDiv.innerHTML = `
-          <p class="text-red-600 mt-4">Error scanning: ${err.message}</p>`;
+        status.textContent = "❌ Error running scan";
+        console.error(err);
       }
-
-      button.innerText = "Scan Now";
     }
   </script>
-</head>
-<body class="bg-gray-100 min-h-screen flex flex-col items-center p-6">
-  <h1 class="text-2xl font-bold mb-4 text-gray-800">Triangular Arbitrage Scanner</h1>
-
-  <div class="bg-white shadow-lg rounded-lg p-4 w-full max-w-2xl mb-4">
-    <label class="block mb-2 font-semibold text-gray-700">Exchanges (comma separated)</label>
-    <input id="exchanges" class="w-full p-2 border rounded mb-3 text-sm" placeholder="e.g., binance, kucoin, bybit" />
-
-    <label class="block mb-2 font-semibold text-gray-700">Minimum Profit Margin (%)</label>
-    <input id="minProfit" class="w-full p-2 border rounded mb-3 text-sm" type="number" value="0.0" step="0.1" />
-
-    <button id="scanButton" onclick="scan()" class="bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700">
-      Scan Now
-    </button>
-  </div>
-
-  <div id="results" class="w-full max-w-4xl"></div>
 </body>
 </html>

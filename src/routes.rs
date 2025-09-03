@@ -59,4 +59,4 @@ pub async fn scan_handler(
             "results": results
         })),
     )
-                       }
+}

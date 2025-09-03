@@ -3,15 +3,19 @@ mod exchanges;
 mod logic;
 mod routes;
 
-use axum::{routing::{get, post}, Router};
+use axum::{
+    routing::{post},
+    Router,
+};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::net::TcpListener;
 use tower_http::cors::{CorsLayer, Any};
+use tower_http::services::ServeDir;
 
 use crate::models::AppState;
-use crate::routes::{ui_handler, scan_handler};
+use crate::routes::scan_handler;
 
 #[tokio::main]
 async fn main() {
@@ -26,8 +30,11 @@ async fn main() {
 
     // Router
     let app = Router::new()
-        .route("/", get(ui_handler))
+        // Arbitrage scan API
         .route("/scan", post(scan_handler))
+        // Serve static UI (index.html in /static)
+        .nest_service("/", ServeDir::new("static"))
+        // Middleware + state
         .layer(cors)
         .with_state(shared_state);
 
@@ -45,4 +52,4 @@ async fn main() {
     axum::serve(listener, app)
         .await
         .expect("server error");
-                                                    }
+        }

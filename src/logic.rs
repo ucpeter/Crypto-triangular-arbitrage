@@ -2,14 +2,13 @@ use crate::models::{ArbResult, PriceMap};
 use crate::exchanges;
 use std::collections::{HashMap, HashSet};
 
-/// Dispatcher to fetch prices for a specific exchange
 pub async fn fetch_prices_for_exchange(exchange: &str) -> Result<PriceMap, String> {
     match exchange {
-        "binance" => exchanges::binance::fetch_prices().await,
-        "kucoin" => exchanges::kucoin::fetch_prices().await,
-        "bybit" => exchanges::bybit::fetch_prices().await,
-        "kraken" => exchanges::kraken::fetch_prices().await,
-        "gateio" => exchanges::gateio::fetch_prices().await,
+        "binance" => exchanges::fetch_binance().await,
+        "kucoin" => exchanges::fetch_kucoin().await,
+        "bybit" => exchanges::fetch_bybit().await,
+        "kraken" => exchanges::fetch_kraken().await,
+        "gateio" => exchanges::fetch_gateio().await,
         _ => Err(format!("Exchange '{}' not supported", exchange)),
     }
 }

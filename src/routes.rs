@@ -1,62 +1,50 @@
 use axum::{
     extract::State,
-    response::Json,
+    response::{Html, Json, IntoResponse},
     http::StatusCode,
 };
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use std::fs;
 
 use crate::models::{AppState, ScanRequest};
-use crate::logic::{scan_all_exchanges, fetch_prices_for_exchange};
+use crate::logic::scan_all_exchanges;
 
-pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::OK,
-        Json(json!({
-            "message": "Triangular Arbitrage Scanner API is running",
-            "usage": "POST /scan with { exchanges: [], min_profit: number }"
-        })),
-    )
+pub async fn ui_handler() -> impl IntoResponse {
+    match fs::read_to_string("static/index.html") {
+        Ok(content) => Html(content).into_response(),
+        Err(_) => Html("<h1>UI not found. Please redeploy with static/index.html.</h1>").into_response(),
+    }
 }
 
 pub async fn scan_handler(
-    State(_state): State<Arc<Mutex<AppState>>>,
+    State(state): State<Arc<Mutex<AppState>>>,
     Json(payload): Json<ScanRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let mut bundles = Vec::new();
+    let mut shared_state = state.lock().await;
 
-    // Fetch market data for each selected exchange
-    for ex in &payload.exchanges {
-        match fetch_prices_for_exchange(ex).await {
-            Ok(price_map) => {
-                bundles.push((ex.clone(), price_map));
-            }
-            Err(err) => {
-                eprintln!("⚠️ Failed to fetch data for {}: {}", ex, err);
-            }
+    match scan_all_exchanges(&payload.exchanges, payload.min_profit).await {
+        Ok(results) => {
+            shared_state.last_results = Some(results.clone());
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "status": "success",
+                    "count": results.len(),
+                    "results": results
+                })),
+            )
+        }
+        Err(e) => {
+            eprintln!("Scan error: {:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "status": "error",
+                    "message": format!("Failed to scan: {}", e)
+                })),
+            )
         }
     }
-
-    // Now scan for opportunities
-    let results = scan_all_exchanges(bundles, payload.min_profit);
-
-    if results.is_empty() {
-        return (
-            StatusCode::OK,
-            Json(json!({
-                "status": "no_opportunities",
-                "message": "No arbitrage opportunities found for the selected exchanges."
-            })),
-        );
     }
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "status": "success",
-            "count": results.len(),
-            "results": results
-        })),
-    )
-}

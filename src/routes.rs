@@ -1,46 +1,58 @@
-// src/routes.rs
 use axum::{
     extract::State,
-    http::StatusCode,
     response::Json,
-    Json as AxumJson,
+    http::StatusCode,
 };
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::models::{AppState, ArbResult, ScanRequest};
-use crate::logic::scan_exchanges;
+use crate::models::{AppState, ScanRequest, ScanResponse, ArbResult};
+use crate::logic::scan_all_exchanges;
+use crate::exchanges::fetch_exchange_data;
 
-/// Main handler: runs the async scan_exchanges function and returns JSON
-pub async fn scan_handler(
-    State(state): State<Arc<Mutex<AppState>>>,
-    AxumJson(payload): AxumJson<ScanRequest>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    // run the scan (concurrently fetching prices + scanning)
-    let scanned = match scan_exchanges(payload.exchanges.clone(), payload.min_profit).await {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("Scan failed: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "status": "error", "message": e })),
-            );
-        }
-    };
-
-    // store results once scanning is done
-    {
-        let mut lock = state.lock().await;
-        lock.last_results = Some(scanned.clone());
-    }
-
+pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::OK,
         Json(json!({
-            "status": "success",
-            "count": scanned.len(),
-            "results": scanned
+            "message": "Triangular Arbitrage Scanner API is running",
+            "usage": "POST /scan with { exchanges: [], min_profit: number }"
         })),
     )
-                   }
+}
+
+pub async fn scan_handler(
+    State(state): State<Arc<Mutex<AppState>>>,
+    Json(payload): Json<ScanRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let mut shared_state = state.lock().await;
+
+    // Collect data from selected exchanges
+    let mut bundle: Vec<(String, crate::models::PriceMap)> = Vec::new();
+    for ex in &payload.exchanges {
+        match fetch_exchange_data(ex).await {
+            Ok(prices) => bundle.push((ex.clone(), prices)),
+            Err(e) => {
+                eprintln!("❌ Error fetching data from {}: {}", ex, e);
+            }
+        }
+    }
+
+    // Run the arbitrage scan
+    let results: Vec<ArbResult> = scan_all_exchanges(bundle, payload.min_profit);
+
+    // Save last results in state
+    shared_state.last_results = Some(results.clone());
+
+    // Return structured response
+    let response = ScanResponse {
+        status: "success".to_string(),
+        count: results.len(),
+        results,
+    };
+
+    (
+        StatusCode::OK,
+        Json(serde_json::to_value(response).unwrap())
+    )
+}

@@ -18,15 +18,14 @@ fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
         let base = parts[0].to_string();
         let quote = parts[1].to_string();
 
-        // ensure we only include spot pairs
+        // Only keep the actual pair returned by the exchange
         valid_pairs.insert((base.clone(), quote.clone()));
 
         g.entry(base.clone())
             .or_default()
             .insert(quote.clone(), *price);
-        g.entry(quote.clone())
-            .or_default()
-            .insert(base.clone(), 1.0 / *price);
+
+        // ❌ Removed artificial reverse pair (no 1/price trick)
     }
 
     g
@@ -112,4 +111,4 @@ pub fn scan_all_exchanges(
     }
 
     out
-                            }
+    }

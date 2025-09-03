@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Triangular Arbitrage Scanner</title>
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <style>
+    body { font-size: 0.85rem; } /* Make all text slightly smaller */
+    table { font-size: 0.8rem; } /* Table text even smaller */
+  </style>
   <script>
     async function scan() {
       const exchanges = document.getElementById("exchanges").value
@@ -13,8 +17,11 @@
         .filter(e => e !== "");
       const minProfit = parseFloat(document.getElementById("minProfit").value || "0");
 
-      document.getElementById("scanButton").innerText = "Scanning...";
-      document.getElementById("results").innerHTML = "";
+      const button = document.getElementById("scanButton");
+      const resultsDiv = document.getElementById("results");
+
+      button.innerText = "Scanning...";
+      resultsDiv.innerHTML = "";
 
       try {
         const response = await fetch("/scan", {
@@ -31,21 +38,19 @@
             rows += `
               <tr class="border-b hover:bg-gray-100">
                 <td class="px-2 py-1">${idx + 1}</td>
-                <td class="px-2 py-1 font-bold">${r.exchange}</td>
                 <td class="px-2 py-1">${r.route}</td>
                 <td class="px-2 py-1">${r.spread.toFixed(2)}%</td>
                 <td class="px-2 py-1">${r.profit_before.toFixed(2)}%</td>
                 <td class="px-2 py-1">${r.fee.toFixed(2)}%</td>
-                <td class="px-2 py-1 text-green-600">${r.profit_after.toFixed(2)}%</td>
+                <td class="px-2 py-1 text-green-600 font-semibold">${r.profit_after.toFixed(2)}%</td>
               </tr>`;
           });
 
-          document.getElementById("results").innerHTML = `
+          resultsDiv.innerHTML = `
             <table class="min-w-full bg-white border rounded shadow-md">
               <thead class="bg-gray-800 text-white">
                 <tr>
                   <th class="px-2 py-1">#</th>
-                  <th class="px-2 py-1">Exchange</th>
                   <th class="px-2 py-1">Triangle</th>
                   <th class="px-2 py-1">Spread</th>
                   <th class="px-2 py-1">Profit Before</th>
@@ -56,29 +61,29 @@
               <tbody>${rows}</tbody>
             </table>`;
         } else {
-          document.getElementById("results").innerHTML =
-            `<p class="text-gray-600 mt-4">No opportunities found for the selected parameters.</p>`;
+          resultsDiv.innerHTML = `
+            <p class="text-gray-600 mt-4">No opportunities found for the selected parameters.</p>`;
         }
       } catch (err) {
-        document.getElementById("results").innerHTML =
-          `<p class="text-red-600 mt-4">Error scanning: ${err.message}</p>`;
+        resultsDiv.innerHTML = `
+          <p class="text-red-600 mt-4">Error scanning: ${err.message}</p>`;
       }
 
-      document.getElementById("scanButton").innerText = "Scan Now";
+      button.innerText = "Scan Now";
     }
   </script>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-6">
-  <h1 class="text-3xl font-bold mb-6 text-gray-800">Triangular Arbitrage Scanner</h1>
+  <h1 class="text-2xl font-bold mb-4 text-gray-800">Triangular Arbitrage Scanner</h1>
 
-  <div class="bg-white shadow-lg rounded-lg p-6 w-full max-w-2xl mb-6">
+  <div class="bg-white shadow-lg rounded-lg p-4 w-full max-w-2xl mb-4">
     <label class="block mb-2 font-semibold text-gray-700">Exchanges (comma separated)</label>
-    <input id="exchanges" class="w-full p-2 border rounded mb-4" placeholder="e.g., binance, kucoin, bybit" />
+    <input id="exchanges" class="w-full p-2 border rounded mb-3 text-sm" placeholder="e.g., binance, kucoin, bybit" />
 
     <label class="block mb-2 font-semibold text-gray-700">Minimum Profit Margin (%)</label>
-    <input id="minProfit" class="w-full p-2 border rounded mb-4" type="number" value="0.0" step="0.1" />
+    <input id="minProfit" class="w-full p-2 border rounded mb-3 text-sm" type="number" value="0.0" step="0.1" />
 
-    <button id="scanButton" onclick="scan()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+    <button id="scanButton" onclick="scan()" class="bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700">
       Scan Now
     </button>
   </div>

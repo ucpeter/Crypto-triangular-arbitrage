@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 use crate::models::{AppState, ArbResult, ScanRequest};
 use crate::logic::scan_all_exchanges;
 
-/// Root endpoint: confirms API status
+/// Root endpoint to confirm API status
 pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::OK,
@@ -21,19 +21,19 @@ pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
-/// Main handler for scanning arbitrage opportunities
+/// Handles the scan request and returns results
 pub async fn scan_handler(
     State(state): State<Arc<Mutex<AppState>>>,
     Json(payload): Json<ScanRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let mut shared_state = state.lock().await;
 
-    // Ensure both match arms return the same type
-    let response: (StatusCode, Json<serde_json::Value>) = match scan_all_exchanges(&payload.exchanges, payload.min_profit) {
+    match scan_all_exchanges(&payload.exchanges, payload.min_profit) {
         Ok(results) => {
-            // Save the results to shared state for later access
+            // Store results for later reference
             shared_state.last_results = Some(results.clone());
 
+            // Return a success response
             (
                 StatusCode::OK,
                 Json(json!({
@@ -43,17 +43,17 @@ pub async fn scan_handler(
                 })),
             )
         }
-        Err(e) => {
-            eprintln!("Scan error: {:?}", e);
+        Err(err) => {
+            eprintln!("Scan error: {:?}", err);
+
+            // Return a clean error response with the same type
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({
                     "status": "error",
-                    "message": format!("Failed to scan: {}", e)
+                    "message": format!("Failed to scan: {}", err)
                 })),
             )
         }
-    };
-
-    response
-                }
+    }
+            }

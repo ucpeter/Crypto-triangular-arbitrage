@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Build a graph of spot pairs from the price map
 fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
-    let mut g = HashMap::new();
+    let mut g: HashMap<String, HashMap<String, f64>> = HashMap::new();
     let mut valid_pairs: HashSet<(String, String)> = HashSet::new();
 
     for (pair, price) in prices {
@@ -18,7 +18,7 @@ fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
         let base = parts[0].to_string();
         let quote = parts[1].to_string();
 
-        // ensure we only include spot pairs (both directions valid)
+        // ensure we only include spot pairs
         valid_pairs.insert((base.clone(), quote.clone()));
 
         g.entry(base.clone())
@@ -66,10 +66,12 @@ pub fn tri_arb_single_exchange(
                             let profit_before = (cycle - 1.0) * 100.0;
                             let profit_after = (cycle * fee_factor - 1.0) * 100.0;
 
-                            // ignore tiny noise
+                            // ignore extreme or unrealistic values
                             if profit_after >= min_profit_after && profit_before.abs() < 100.0 {
-                                let route = format!("{} → {} → {} → {}", a, b, c, a);
-                                let pairs = format!("{}/{} | {}/{} | {}/{}", a, b, b, c, c, a);
+                                let route =
+                                    format!("{} → {} → {} → {}", a, b, c, a);
+                                let pairs =
+                                    format!("{}/{} | {}/{} | {}/{}", a, b, b, c, c, a);
 
                                 results.push(ArbResult {
                                     exchange: exchange_name.to_string(),
@@ -110,4 +112,4 @@ pub fn scan_all_exchanges(
     }
 
     out
-                    }
+                            }

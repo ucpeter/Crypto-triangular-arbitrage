@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 use crate::models::{AppState, ArbResult, ScanRequest};
 use crate::logic::scan_all_exchanges;
 
-/// Root endpoint: API status check
+/// Root endpoint: confirms API status
 pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::OK,
@@ -21,18 +21,19 @@ pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
+/// Main handler for scanning arbitrage opportunities
 pub async fn scan_handler(
     State(state): State<Arc<Mutex<AppState>>>,
     Json(payload): Json<ScanRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let mut shared_state = state.lock().await;
 
-    match scan_all_exchanges(&payload.exchanges, payload.min_profit) {
+    // Ensure both match arms return the same type
+    let response: (StatusCode, Json<serde_json::Value>) = match scan_all_exchanges(&payload.exchanges, payload.min_profit) {
         Ok(results) => {
-            // Save results
+            // Save the results to shared state for later access
             shared_state.last_results = Some(results.clone());
 
-            // Return successful JSON response
             (
                 StatusCode::OK,
                 Json(json!({
@@ -43,9 +44,7 @@ pub async fn scan_handler(
             )
         }
         Err(e) => {
-            // Log and return error
             eprintln!("Scan error: {:?}", e);
-
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({
@@ -54,5 +53,7 @@ pub async fn scan_handler(
                 })),
             )
         }
-    }
-    }
+    };
+
+    response
+                }

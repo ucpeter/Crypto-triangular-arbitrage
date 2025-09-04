@@ -1,129 +1,114 @@
+use crate::models::{PairPrice, TriangularResult};
+use crate::utils::round2;
 use std::collections::{HashMap, HashSet};
-use crate::models::ArbResult;
-use crate::exchanges::{
-    fetch_binance, fetch_kucoin, fetch_gateio, fetch_kraken, fetch_bybit, PriceMap,
-};
 
-/// Build graph with forward + synthetic reverse edges
-fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
-    let mut g: HashMap<String, HashMap<String, f64>> = HashMap::new();
+/// Scan triangles using given pair prices (spot)
+/// - prices: slice of PairPrice
+/// - min_profit: minimum % BEFORE fees to include (e.g., 0.3)
+/// - fee_per_leg: percent per leg (e.g., 0.1 for 0.1%)
+pub fn scan_triangles(
+    prices: &[PairPrice],
+    min_profit: f64,
+    fee_per_leg: f64,
+) -> Vec<TriangularResult> {
+    let mut rate: HashMap<(String, String), f64> = HashMap::new();
+    let mut neighbors: HashMap<String, HashSet<String>> = HashMap::new();
 
-    for (pair, &price) in prices {
-        if price <= 0.0 {
-            continue;
+    // Build graph strictly with spot pairs only
+    for p in prices {
+        if !p.is_spot || !p.price.is_finite() || p.price <= 0.0 {
+            continue; // skip non-spot or invalid price
         }
-        let parts: Vec<&str> = pair.split('/').collect();
-        if parts.len() != 2 {
-            continue;
-        }
-        let base = parts[0].to_string();
-        let quote = parts[1].to_string();
 
-        // forward (real market)
-        g.entry(base.clone()).or_default().insert(quote.clone(), price);
+        let a = p.base.to_uppercase();
+        let b = p.quote.to_uppercase();
 
-        // reverse (synthetic, always allowed for math)
-        g.entry(quote.clone()).or_default().insert(base.clone(), 1.0 / price);
+        // direct
+        rate.insert((a.clone(), b.clone()), p.price);
+        neighbors.entry(a.clone()).or_default().insert(b.clone());
+
+        // inverse (mathematically valid)
+        rate.insert((b.clone(), a.clone()), 1.0 / p.price);
+        neighbors.entry(b.clone()).or_default().insert(a.clone());
     }
-    g
-}
 
-/// Check if pair exists as a real market (from API data)
-fn is_real_pair(prices: &PriceMap, a: &str, b: &str) -> bool {
-    let key = format!("{}/{}", a, b);
-    prices.contains_key(&key)
-}
+    let mut seen: HashSet<(String, String, String)> = HashSet::new();
+    let mut out: Vec<TriangularResult> = Vec::new();
+    let fee_mult_one = 1.0 - (fee_per_leg / 100.0);
+    let total_fee_percent = 3.0 * fee_per_leg;
 
-/// Find triangular arbitrage opportunities on one exchange
-pub fn tri_arb_single_exchange(
-    exchange_name: &str,
-    prices: &PriceMap,
-    min_profit_after: f64,
-    fee_per_trade_pct: f64,
-) -> Vec<ArbResult> {
-    let g = build_graph(prices);
-    let assets: Vec<String> = g.keys().cloned().collect();
-
-    let mut results: Vec<ArbResult> = Vec::new();
-    let fee_factor = (1.0 - fee_per_trade_pct / 100.0).powf(3.0);
-
-    let mut seen: HashSet<String> = HashSet::new();
-
-    for a in &assets {
-        if let Some(map_ab) = g.get(a) {
-            for (b, r_ab) in map_ab {
-                if a == b {
-                    continue;
-                }
-                if let Some(map_bc) = g.get(b) {
-                    for (c, r_bc) in map_bc {
-                        if c == a || c == b {
-                            continue;
-                        }
-                        if let Some(r_ca) = g.get(c).and_then(|m| m.get(a)) {
-                            // ✅ Only allow if all 3 legs are real spot pairs
-                            if !(is_real_pair(prices, a, b)
-                                && is_real_pair(prices, b, c)
-                                && is_real_pair(prices, c, a))
-                            {
-                                continue;
-                            }
-
-                            let cycle = r_ab * r_bc * r_ca;
-                            let profit_before = (cycle - 1.0) * 100.0;
-                            let profit_after = (cycle * fee_factor - 1.0) * 100.0;
-
-                            if profit_after >= min_profit_after {
-                                let route = format!("{} → {} → {} → {}", a, b, c, a);
-
-                                if seen.insert(route.clone()) {
-                                    results.push(ArbResult {
-                                        exchange: exchange_name.to_string(),
-                                        route,
-                                        pairs: format!("{}/{} | {}/{} | {}/{}", a, b, b, c, c, a),
-                                        profit_before,
-                                        fee: 3.0 * fee_per_trade_pct,
-                                        profit_after,
-                                    });
-                                }
-                            }
-                        }
+    for (a, bs) in &neighbors {
+        for b in bs {
+            if a == b {
+                continue;
+            }
+            if let Some(cs) = neighbors.get(b) {
+                for c in cs {
+                    if c == a || c == b {
+                        continue;
                     }
+                    // must have edge c -> a
+                    if !neighbors.get(c).map_or(false, |s| s.contains(a)) {
+                        continue;
+                    }
+
+                    // lookup rates
+                    let r1 = match rate.get(&(a.clone(), b.clone())) {
+                        Some(v) => *v,
+                        None => continue,
+                    };
+                    let r2 = match rate.get(&(b.clone(), c.clone())) {
+                        Some(v) => *v,
+                        None => continue,
+                    };
+                    let r3 = match rate.get(&(c.clone(), a.clone())) {
+                        Some(v) => *v,
+                        None => continue,
+                    };
+
+                    // gross cycle multiplier
+                    let gross = r1 * r2 * r3;
+                    let profit_before = (gross - 1.0) * 100.0;
+
+                    // sanity checks
+                    if !profit_before.is_finite() || profit_before <= 0.0 {
+                        continue;
+                    }
+                    if profit_before < min_profit {
+                        continue;
+                    }
+
+                    // apply fees multiplicatively
+                    let net = (r1 * fee_mult_one) * (r2 * fee_mult_one) * (r3 * fee_mult_one);
+                    let profit_after = (net - 1.0) * 100.0;
+
+                    // canonical dedupe key
+                    let reps = vec![
+                        (a.clone(), b.clone(), c.clone()),
+                        (b.clone(), c.clone(), a.clone()),
+                        (c.clone(), a.clone(), b.clone()),
+                    ];
+                    let key = reps.iter().min().unwrap().clone();
+                    if !seen.insert(key) {
+                        continue;
+                    }
+
+                    out.push(TriangularResult {
+                        triangle: format!("{}/{} -> {}/{} -> {}/{}", a, b, b, c, c, a),
+                        profit_before_fees: round2(profit_before),
+                        trade_fees: round2(total_fee_percent),
+                        profit_after_fees: round2(profit_after),
+                    });
                 }
             }
         }
     }
 
-    results.sort_by(|a, b| {
-        b.profit_after
-            .partial_cmp(&a.profit_after)
+    // sort by profit_after_fees desc
+    out.sort_by(|x, y| {
+        y.profit_after_fees
+            .partial_cmp(&x.profit_after_fees)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    results
-}
-
-/// Run scan across all exchanges
-pub async fn scan_all_exchanges(selected: &[String], min_profit_after: f64) -> Vec<ArbResult> {
-    let mut out = Vec::new();
-    let default_fee = 0.10;
-
-    for ex in selected {
-        let prices: Option<PriceMap> = match ex.as_str() {
-            "binance" => fetch_binance().await.ok(),
-            "kucoin" => fetch_kucoin().await.ok(),
-            "gateio" => fetch_gateio().await.ok(),
-            "kraken" => fetch_kraken().await.ok(),
-            "bybit" => fetch_bybit().await.ok(),
-            _ => None,
-        };
-
-        if let Some(pm) = prices {
-            let mut v = tri_arb_single_exchange(ex, &pm, min_profit_after, default_fee);
-            out.append(&mut v);
-        } else {
-            eprintln!("❌ Failed to fetch prices for {}", ex);
-        }
-    }
-
     out
         }

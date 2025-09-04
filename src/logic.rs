@@ -1,37 +1,39 @@
 use crate::models::{PairPrice, TriangularResult};
-use crate::utils::round2;
+use crate::utils;
 use std::collections::{HashMap, HashSet};
 
-/// Scan for arbitrage opportunities from a flat list of PairPrice
-pub fn scan_triangles(
-    prices: &[PairPrice],
-    min_profit: f64,
-    fee_per_leg: f64,
-) -> Vec<TriangularResult> {
+/// Scan all possible triangles from spot market prices
+/// - prices: slice of PairPrice
+/// - min_profit: minimum % before fees
+/// - fee_per_leg: % fee per trade leg (e.g. 0.1 = 0.1%)
+pub fn scan_triangles(prices: &[PairPrice], min_profit: f64, fee_per_leg: f64) -> Vec<TriangularResult> {
     let mut rate: HashMap<(String, String), f64> = HashMap::new();
     let mut neighbors: HashMap<String, HashSet<String>> = HashMap::new();
 
-    // Build graph from spot pairs
+    // Build graph with only valid spot pairs
     for p in prices {
         if !p.is_spot || !p.price.is_finite() || p.price <= 0.0 {
             continue;
         }
+
         let a = p.base.to_uppercase();
         let b = p.quote.to_uppercase();
 
+        // direct edge
         rate.insert((a.clone(), b.clone()), p.price);
         neighbors.entry(a.clone()).or_default().insert(b.clone());
 
+        // inverse edge
         rate.insert((b.clone(), a.clone()), 1.0 / p.price);
         neighbors.entry(b.clone()).or_default().insert(a.clone());
     }
 
     let mut seen: HashSet<(String, String, String)> = HashSet::new();
     let mut out: Vec<TriangularResult> = Vec::new();
-
     let fee_mult_one = 1.0 - (fee_per_leg / 100.0);
     let total_fee_percent = 3.0 * fee_per_leg;
 
+    // Explore triangles
     for (a, bs) in &neighbors {
         for b in bs {
             if a == b {
@@ -42,10 +44,12 @@ pub fn scan_triangles(
                     if c == a || c == b {
                         continue;
                     }
+                    // must close the loop
                     if !neighbors.get(c).map_or(false, |s| s.contains(a)) {
                         continue;
                     }
 
+                    // look up rates
                     let r1 = match rate.get(&(a.clone(), b.clone())) {
                         Some(v) => *v,
                         None => continue,
@@ -62,16 +66,15 @@ pub fn scan_triangles(
                     let gross = r1 * r2 * r3;
                     let profit_before = (gross - 1.0) * 100.0;
 
-                    if !profit_before.is_finite() || profit_before <= 0.0 {
-                        continue;
-                    }
-                    if profit_before < min_profit {
+                    if !profit_before.is_finite() || profit_before < min_profit {
                         continue;
                     }
 
+                    // apply fees
                     let net = (r1 * fee_mult_one) * (r2 * fee_mult_one) * (r3 * fee_mult_one);
                     let profit_after = (net - 1.0) * 100.0;
 
+                    // dedupe
                     let reps = vec![
                         (a.clone(), b.clone(), c.clone()),
                         (b.clone(), c.clone(), a.clone()),
@@ -83,21 +86,22 @@ pub fn scan_triangles(
                     }
 
                     out.push(TriangularResult {
-                        triangle: format!("{}/{} -> {}/{} -> {}/{}", a, b, b, c, c, a),
-                        profit_before_fees: round2(profit_before),
-                        trade_fees: round2(total_fee_percent),
-                        profit_after_fees: round2(profit_after),
+                        triangle: format!("{} → {} → {} → {}", a, b, c, a),
+                        pairs: format!("{}/{} | {}/{} | {}/{}", a, b, b, c, c, a),
+                        profit_before_fees: utils::round2(profit_before),
+                        trade_fees: utils::round2(total_fee_percent),
+                        profit_after_fees: utils::round2(profit_after),
                     });
                 }
             }
         }
     }
 
+    // sort best → worst
     out.sort_by(|x, y| {
         y.profit_after_fees
             .partial_cmp(&x.profit_after_fees)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-
     out
         }

@@ -1,15 +1,15 @@
 use crate::models::{ArbResult, PriceMap};
 use std::collections::HashMap;
 
-/// Build a graph of pairs from the price map
+/// Build a graph of ONLY the real spot pairs the exchange API provides
 fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
     let mut g: HashMap<String, HashMap<String, f64>> = HashMap::new();
-    let stable_assets = ["USDT", "USDC", "BUSD", "USD", "BTC", "ETH"];
 
     for (pair, price) in prices {
         if *price <= 0.0 {
             continue;
         }
+
         let parts: Vec<&str> = pair.split('/').collect();
         if parts.len() != 2 {
             continue;
@@ -18,21 +18,14 @@ fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
         let base = parts[0].to_string();
         let quote = parts[1].to_string();
 
-        // forward (real pair from API)
-        g.entry(base.clone())
+        // forward only (no artificial reverse)
+        g.entry(base)
             .or_default()
-            .insert(quote.clone(), *price);
-
-        // reverse (only if one side is in stable_assets)
-        if stable_assets.contains(&quote.as_str()) {
-            g.entry(quote.clone())
-                .or_default()
-                .insert(base.clone(), 1.0 / *price);
-        }
+            .insert(quote, *price);
     }
 
     g
-        }
+}
 /// Run triangular arbitrage on a single exchange
 pub fn tri_arb_single_exchange(
     exchange_name: &str,

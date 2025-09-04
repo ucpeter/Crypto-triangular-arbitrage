@@ -1,24 +1,25 @@
 [package]
-name = "triangular_arbitrage"
+name = "triangular_arbitrage_rust_web"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Web framework
+# async runtime
+tokio = { version = "1.40", features = ["full"] }
+
+# web framework
 axum = "0.7"
 
-# Async runtime
-tokio = { version = "1", features = ["full"] }
+# HTTP client for exchange APIs
+reqwest = { version = "0.11", features = ["json", "gzip"] }
 
-# HTTP client
-reqwest = { version = "0.12", features = ["json"] }
-
-# Serialization / Deserialization
+# serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# Concurrency utilities
-futures = "0.3"
-
-# HTTP middleware (CORS + static file serving)
+# CORS & static file serving
 tower-http = { version = "0.5", features = ["cors", "fs"] }
+
+# logging (optional, useful for debugging)
+tracing = "0.1"
+tracing-subscriber = "0.3"

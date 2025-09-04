@@ -1,36 +1,29 @@
-use crate::models::{ArbResult, PriceMap};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use crate::models::ArbResult;
+use crate::exchanges::{fetch_binance, fetch_kucoin, fetch_gateio, fetch_kraken, fetch_bybit, PriceMap};
 
+/// Build graph directly from available pairs (spot only, no fabricated reverse)
 fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
     let mut g: HashMap<String, HashMap<String, f64>> = HashMap::new();
 
-    for (pair, price) in prices {
-        if *price <= 0.0 {
+    for (pair, &price) in prices {
+        if price <= 0.0 {
             continue;
         }
         let parts: Vec<&str> = pair.split('/').collect();
         if parts.len() != 2 {
             continue;
         }
-
         let base = parts[0].to_string();
         let quote = parts[1].to_string();
 
-        // forward (always real from exchange)
-        g.entry(base.clone())
-            .or_default()
-            .insert(quote.clone(), *price);
-
-        // reverse (synthetic if not present)
-        g.entry(quote.clone())
-            .or_default()
-            .entry(base.clone())
-            .or_insert(1.0 / *price);
+        g.entry(base.clone()).or_default().insert(quote.clone(), price);
+        // no reverse insertion here — only real spot pairs
     }
-
     g
 }
-/// Run triangular arbitrage on a single exchange
+
+/// Find triangular arbitrage opportunities on one exchange
 pub fn tri_arb_single_exchange(
     exchange_name: &str,
     prices: &PriceMap,
@@ -38,14 +31,12 @@ pub fn tri_arb_single_exchange(
     fee_per_trade_pct: f64,
 ) -> Vec<ArbResult> {
     let g = build_graph(prices);
-    let mut assets: Vec<String> = g.keys().cloned().collect();
-
-    if assets.len() > 250 {
-        assets.truncate(250);
-    }
+    let assets: Vec<String> = g.keys().cloned().collect();
 
     let mut results: Vec<ArbResult> = Vec::new();
     let fee_factor = (1.0 - fee_per_trade_pct / 100.0).powf(3.0);
+
+    let mut seen: HashSet<String> = HashSet::new();
 
     for a in &assets {
         if let Some(map_ab) = g.get(a) {
@@ -59,27 +50,22 @@ pub fn tri_arb_single_exchange(
                             continue;
                         }
                         if let Some(r_ca) = g.get(c).and_then(|m| m.get(a)) {
-                            // cycle calculation
                             let cycle = r_ab * r_bc * r_ca;
                             let profit_before = (cycle - 1.0) * 100.0;
                             let profit_after = (cycle * fee_factor - 1.0) * 100.0;
 
-                            // ignore extreme or unrealistic values
-                            if profit_after >= min_profit_after && profit_before.abs() < 100.0 {
-                                let route =
-                                    format!("{} → {} → {} → {}", a, b, c, a);
-                                let pairs =
-                                    format!("{}/{} | {}/{} | {}/{}", a, b, b, c, c, a);
-
-                                results.push(ArbResult {
-                                    exchange: exchange_name.to_string(),
-                                    route,
-                                    pairs: Some(pairs),
-                                    profit_before,
-                                    fee: 3.0 * fee_per_trade_pct,
-                                    profit_after,
-                                    spread: (cycle - 1.0) * 100.0,
-                                });
+                            if profit_after >= min_profit_after {
+                                let route = format!("{} → {} → {} → {}", a, b, c, a);
+                                if seen.insert(route.clone()) {
+                                    results.push(ArbResult {
+                                        exchange: exchange_name.to_string(),
+                                        route: route.clone(),
+                                        pairs: format!("{}/{} | {}/{} | {}/{}", a, b, b, c, c, a),
+                                        profit_before,
+                                        fee: 3.0 * fee_per_trade_pct,
+                                        profit_after,
+                                    });
+                                }
                             }
                         }
                     }
@@ -88,25 +74,31 @@ pub fn tri_arb_single_exchange(
         }
     }
 
-    results.sort_by(|a, b| {
-        b.profit_after
-            .partial_cmp(&a.profit_after)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    results.sort_by(|a, b| b.profit_after.partial_cmp(&a.profit_after).unwrap_or(std::cmp::Ordering::Equal));
     results
 }
 
-/// Scan all exchanges and merge results
-pub fn scan_all_exchanges(
-    bundle: Vec<(String, PriceMap)>,
-    min_profit_after: f64,
-) -> Vec<ArbResult> {
-    let default_fee = 0.10; // assume 0.1% per trade
+/// Run scan across all exchanges
+pub async fn scan_all_exchanges(selected: &[String], min_profit_after: f64) -> Vec<ArbResult> {
     let mut out = Vec::new();
+    let default_fee = 0.10;
 
-    for (ex, pm) in bundle {
-        let mut v = tri_arb_single_exchange(&ex, &pm, min_profit_after, default_fee);
-        out.append(&mut v);
+    for ex in selected {
+        let prices: Option<PriceMap> = match ex.as_str() {
+            "binance" => fetch_binance().await.ok(),
+            "kucoin" => fetch_kucoin().await.ok(),
+            "gateio" => fetch_gateio().await.ok(),
+            "kraken" => fetch_kraken().await.ok(),
+            "bybit" => fetch_bybit().await.ok(),
+            _ => None,
+        };
+
+        if let Some(pm) = prices {
+            let mut v = tri_arb_single_exchange(ex, &pm, min_profit_after, default_fee);
+            out.append(&mut v);
+        } else {
+            eprintln!("❌ Failed to fetch prices for {}", ex);
+        }
     }
 
     out

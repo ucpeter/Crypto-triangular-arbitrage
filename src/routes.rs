@@ -7,8 +7,13 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::models::{AppState, ScanRequest, ScanResponse, ArbResult};
-use crate::logic::scan_all_exchanges;
+use crate::models::{ScanRequest, ScanResponse, PairPrice};
+use crate::logic::scan_triangles;
+use crate::exchanges::{
+    fetch_binance, fetch_kucoin, fetch_gateio, fetch_kraken, fetch_bybit,
+};
+
+type SharedState = Arc<Mutex<()>>; // no AppState anymore
 
 pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
     (
@@ -21,22 +26,30 @@ pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
 }
 
 pub async fn scan_handler(
-    State(state): State<Arc<Mutex<AppState>>>,
+    State(_): State<SharedState>,
     Json(payload): Json<ScanRequest>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    let mut shared_state = state.lock().await;
+) -> (StatusCode, Json<ScanResponse>) {
+    let mut all_pairs: Vec<PairPrice> = Vec::new();
 
-    let results: Vec<ArbResult> =
-        scan_all_exchanges(&payload.exchanges, payload.min_profit).await;
+    for ex in &payload.exchanges {
+        let data: Vec<PairPrice> = match ex.as_str() {
+            "binance" => fetch_binance().await.unwrap_or_default(),
+            "kucoin" => fetch_kucoin().await.unwrap_or_default(),
+            "gateio" => fetch_gateio().await.unwrap_or_default(),
+            "kraken" => fetch_kraken().await.unwrap_or_default(),
+            "bybit" => fetch_bybit().await.unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        all_pairs.extend(data);
+    }
 
-    shared_state.last_results = Some(results.clone());
+    let results = scan_triangles(&all_pairs, payload.min_profit, 0.1);
 
     (
         StatusCode::OK,
-        Json(json!({
-            "status": "success",
-            "count": results.len(),
-            "results": results
-        })),
+        Json(ScanResponse {
+            count: results.len(),
+            results,
+        }),
     )
-}
+    }

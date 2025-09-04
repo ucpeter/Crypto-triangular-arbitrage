@@ -6,9 +6,6 @@ use crate::exchanges::{fetch_binance, fetch_kucoin, fetch_gateio, fetch_kraken, 
 fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
     let mut g: HashMap<String, HashMap<String, f64>> = HashMap::new();
 
-    // Build a set of real pairs
-    let valid_pairs: HashSet<String> = prices.keys().cloned().collect();
-
     for (pair, &price) in prices {
         if price <= 0.0 {
             continue;
@@ -20,14 +17,11 @@ fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
         let base = parts[0].to_string();
         let quote = parts[1].to_string();
 
-        // forward (always safe)
+        // forward (real spot market)
         g.entry(base.clone()).or_default().insert(quote.clone(), price);
 
-        // reverse (only if exchange really lists "QUOTE/BASE")
-        let reverse = format!("{}/{}", quote, base);
-        if valid_pairs.contains(&reverse) {
-            g.entry(quote.clone()).or_default().insert(base.clone(), 1.0 / price);
-        }
+        // reverse (synthetic, mathematically valid)
+        g.entry(quote.clone()).or_default().insert(base.clone(), 1.0 / price);
     }
     g
 }

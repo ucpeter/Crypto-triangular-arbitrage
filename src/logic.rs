@@ -17,8 +17,11 @@ fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
         let base = parts[0].to_string();
         let quote = parts[1].to_string();
 
+        // forward
         g.entry(base.clone()).or_default().insert(quote.clone(), price);
-        // no reverse insertion here — only real spot pairs
+
+        // reverse (synthetic but safe)
+        g.entry(quote.clone()).or_default().insert(base.clone(), 1.0 / price);
     }
     g
 }

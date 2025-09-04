@@ -60,4 +60,4 @@ pub async fn scan_handler(
             }).collect::<Vec<_>>()
         })),
     )
-                   }
+        }

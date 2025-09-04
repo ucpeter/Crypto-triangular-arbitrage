@@ -7,49 +7,50 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::models::{ScanRequest, ScanResponse, PairPrice};
-use crate::logic::scan_triangles;
-use crate::exchanges::{
-    fetch_binance, fetch_kucoin, fetch_gateio, fetch_kraken, fetch_bybit,
-};
-
-type SharedState = Arc<Mutex<()>>; // no AppState anymore
+use crate::logic::scan_all_exchanges;
+use crate::models::ScanRequest;
 
 pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::OK,
         Json(json!({
-            "message": "Triangular Arbitrage Scanner API is running",
+            "message": "Triangular Arbitrage Scanner is running",
             "usage": "POST /scan with { exchanges: [], min_profit: number }"
         })),
     )
 }
 
 pub async fn scan_handler(
-    State(_): State<SharedState>,
+    State(_): State<Arc<Mutex<()>>>,
     Json(payload): Json<ScanRequest>,
-) -> (StatusCode, Json<ScanResponse>) {
-    let mut all_pairs: Vec<PairPrice> = Vec::new();
-
-    for ex in &payload.exchanges {
-        let data: Vec<PairPrice> = match ex.as_str() {
-            "binance" => fetch_binance().await.unwrap_or_default(),
-            "kucoin" => fetch_kucoin().await.unwrap_or_default(),
-            "gateio" => fetch_gateio().await.unwrap_or_default(),
-            "kraken" => fetch_kraken().await.unwrap_or_default(),
-            "bybit" => fetch_bybit().await.unwrap_or_default(),
-            _ => Vec::new(),
-        };
-        all_pairs.extend(data);
+) -> (StatusCode, Json<serde_json::Value>) {
+    match scan_all_exchanges(&payload.exchanges, payload.min_profit).await {
+        Ok(results) => {
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "status": "success",
+                    "count": results.len(),
+                    "results": results.iter().map(|r| {
+                        json!({
+                            "triangle": r.triangle,
+                            "pairs": r.pairs,
+                            "profit_before": r.profit_before_fees,
+                            "fees": r.trade_fees,
+                            "profit_after": r.profit_after_fees,
+                        })
+                    }).collect::<Vec<_>>()
+                })),
+            )
+        }
+        Err(e) => {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "status": "error",
+                    "message": format!("Failed to scan: {}", e)
+                })),
+            )
+        }
     }
-
-    let results = scan_triangles(&all_pairs, payload.min_profit, 0.1);
-
-    (
-        StatusCode::OK,
-        Json(ScanResponse {
-            count: results.len(),
-            results,
-        }),
-    )
-    }
+}

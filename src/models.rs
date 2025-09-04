@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+/// Shared application state (keeps last results)
+#[derive(Default)]
+pub struct AppState {
+    pub last_results: Option<Vec<TriangularResult>>,
+}
+
 /// Represents a single trading pair price
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairPrice {
@@ -9,25 +15,39 @@ pub struct PairPrice {
     pub is_spot: bool,
 }
 
-/// Represents a triangular arbitrage result
+/// A single triangular arbitrage result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TriangularResult {
-    pub triangle: String,           // e.g. USDT/BTC -> BTC/ETH -> ETH/USDT
-    pub profit_before_fees: f64,    // % before fees
-    pub trade_fees: f64,            // total % fees
-    pub profit_after_fees: f64,     // % after fees
+    /// e.g., "USDT → BTC → ETH → USDT"
+    pub triangle: String,
+
+    /// e.g., "USDT/BTC | BTC/ETH | ETH/USDT"
+    pub pairs: String,
+
+    /// Profit before fees (%)
+    pub profit_before_fees: f64,
+
+    /// Total trade fees applied (%)
+    pub trade_fees: f64,
+
+    /// Profit after fees (%)
+    pub profit_after_fees: f64,
 }
 
-/// Request payload from UI
+/// Request body for POST /scan
 #[derive(Debug, Clone, Deserialize)]
 pub struct ScanRequest {
-    pub exchanges: Vec<String>, // selected exchanges
-    pub min_profit: f64,        // minimum % profit
+    /// Exchanges to scan, e.g., ["binance", "kraken"]
+    pub exchanges: Vec<String>,
+
+    /// Minimum profit margin (before fees) to include
+    pub min_profit: f64,
 }
 
-/// Response to UI
+/// Response wrapper (if you want strong typing, but currently JSON is built in routes)
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanResponse {
+    pub status: String,
     pub count: usize,
     pub results: Vec<TriangularResult>,
 }

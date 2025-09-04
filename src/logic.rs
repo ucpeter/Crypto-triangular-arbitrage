@@ -1,12 +1,9 @@
 use crate::models::{ArbResult, PriceMap};
 use std::collections::HashMap;
 
-/// Build a graph but only keep pairs that *exist* on spot markets
 fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
     let mut g: HashMap<String, HashMap<String, f64>> = HashMap::new();
 
-    // Keep a set of all pairs for lookup
-    let mut valid_pairs: HashMap<(String, String), f64> = HashMap::new();
     for (pair, price) in prices {
         if *price <= 0.0 {
             continue;
@@ -15,26 +12,24 @@ fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
         if parts.len() != 2 {
             continue;
         }
-        valid_pairs.insert((parts[0].to_string(), parts[1].to_string()), *price);
-    }
 
-    // Now only insert forward and reverse if BOTH exist in the market list
-    for ((base, quote), price) in &valid_pairs {
-        // forward
+        let base = parts[0].to_string();
+        let quote = parts[1].to_string();
+
+        // forward (always real from exchange)
         g.entry(base.clone())
             .or_default()
             .insert(quote.clone(), *price);
 
-        // reverse ONLY if explicitly listed
-        if let Some(rev_price) = valid_pairs.get(&(quote.clone(), base.clone())) {
-            g.entry(quote.clone())
-                .or_default()
-                .insert(base.clone(), *rev_price);
-        }
+        // reverse (synthetic if not present)
+        g.entry(quote.clone())
+            .or_default()
+            .entry(base.clone())
+            .or_insert(1.0 / *price);
     }
 
     g
-        }
+}
 /// Run triangular arbitrage on a single exchange
 pub fn tri_arb_single_exchange(
     exchange_name: &str,

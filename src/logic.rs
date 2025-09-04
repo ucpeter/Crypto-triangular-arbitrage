@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use crate::models::ArbResult;
-use crate::exchanges::{fetch_binance, fetch_kucoin, fetch_gateio, fetch_kraken, fetch_bybit, PriceMap};
+use crate::exchanges::{
+    fetch_binance, fetch_kucoin, fetch_gateio, fetch_kraken, fetch_bybit, PriceMap,
+};
 
-/// Build graph directly from available pairs (spot only, no fabricated reverse)
+/// Build graph with forward + synthetic reverse edges
 fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
     let mut g: HashMap<String, HashMap<String, f64>> = HashMap::new();
 
@@ -17,13 +19,19 @@ fn build_graph(prices: &PriceMap) -> HashMap<String, HashMap<String, f64>> {
         let base = parts[0].to_string();
         let quote = parts[1].to_string();
 
-        // forward (real spot market)
+        // forward (real market)
         g.entry(base.clone()).or_default().insert(quote.clone(), price);
 
-        // reverse (synthetic, mathematically valid)
+        // reverse (synthetic, always allowed for math)
         g.entry(quote.clone()).or_default().insert(base.clone(), 1.0 / price);
     }
     g
+}
+
+/// Check if pair exists as a real market (from API data)
+fn is_real_pair(prices: &PriceMap, a: &str, b: &str) -> bool {
+    let key = format!("{}/{}", a, b);
+    prices.contains_key(&key)
 }
 
 /// Find triangular arbitrage opportunities on one exchange
@@ -53,16 +61,25 @@ pub fn tri_arb_single_exchange(
                             continue;
                         }
                         if let Some(r_ca) = g.get(c).and_then(|m| m.get(a)) {
+                            // ✅ Only allow if all 3 legs are real spot pairs
+                            if !(is_real_pair(prices, a, b)
+                                && is_real_pair(prices, b, c)
+                                && is_real_pair(prices, c, a))
+                            {
+                                continue;
+                            }
+
                             let cycle = r_ab * r_bc * r_ca;
                             let profit_before = (cycle - 1.0) * 100.0;
                             let profit_after = (cycle * fee_factor - 1.0) * 100.0;
 
                             if profit_after >= min_profit_after {
                                 let route = format!("{} → {} → {} → {}", a, b, c, a);
+
                                 if seen.insert(route.clone()) {
                                     results.push(ArbResult {
                                         exchange: exchange_name.to_string(),
-                                        route: route.clone(),
+                                        route,
                                         pairs: format!("{}/{} | {}/{} | {}/{}", a, b, b, c, c, a),
                                         profit_before,
                                         fee: 3.0 * fee_per_trade_pct,
@@ -77,7 +94,11 @@ pub fn tri_arb_single_exchange(
         }
     }
 
-    results.sort_by(|a, b| b.profit_after.partial_cmp(&a.profit_after).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.profit_after
+            .partial_cmp(&a.profit_after)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     results
 }
 
@@ -105,4 +126,4 @@ pub async fn scan_all_exchanges(selected: &[String], min_profit_after: f64) -> V
     }
 
     out
-    }
+        }

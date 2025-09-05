@@ -23,39 +23,43 @@
       padding: 20px;
       background: #1a1a1a;
       display: flex;
-      flex-wrap: wrap;
+      flex-direction: column;
       gap: 15px;
-      align-items: center;
+      align-items: stretch;
     }
     label {
       font-size: 15px;
     }
     select, input {
-      padding: 6px;
+      padding: 8px;
       font-size: 15px;
       border-radius: 6px;
       border: none;
+      width: 100%;
     }
     button {
       background: #1976d2;
       color: white;
       border: none;
-      padding: 10px 16px;
+      padding: 12px;
       border-radius: 6px;
       cursor: pointer;
-      font-size: 15px;
+      font-size: 16px;
+      width: 100%;
     }
     button:disabled {
       background: #444;
       cursor: not-allowed;
     }
     .status {
-      margin-left: 12px;
+      margin-top: 8px;
       font-style: italic;
       color: #aaa;
+      text-align: center;
     }
     .results-container {
       padding: 20px;
+      display: none; /* 🔴 Hidden until scan results */
     }
     .scrollable-table {
       max-height: 500px;
@@ -68,7 +72,7 @@
       width: 100%;
       border-collapse: collapse;
       min-width: 800px;
-      font-size: 15px; /* slightly bigger */
+      font-size: 15px;
     }
     th, td {
       border: 1px solid #333;
@@ -104,11 +108,11 @@
       <input type="number" id="min-profit" value="0.5" step="0.1">
     </label>
 
-    <button id="scan-btn">Scan Now</button>
+    <button id="scan-btn">🚀 Scan Now</button>
     <span class="status" id="status"></span>
   </div>
 
-  <div class="results-container">
+  <div class="results-container" id="results-container">
     <div class="scrollable-table">
       <table>
         <thead>
@@ -130,6 +134,7 @@
     const scanBtn = document.getElementById("scan-btn");
     const statusEl = document.getElementById("status");
     const resultsBody = document.getElementById("results-body");
+    const resultsContainer = document.getElementById("results-container");
 
     scanBtn.addEventListener("click", async () => {
       const selectedExchanges = Array.from(
@@ -145,6 +150,7 @@
 
       scanBtn.disabled = true;
       statusEl.textContent = "🔄 Scanning...";
+      resultsContainer.style.display = "none"; // hide old results
 
       try {
         const resp = await fetch("/scan", {
@@ -175,6 +181,8 @@
         } else {
           resultsBody.innerHTML = `<tr><td colspan="6">No opportunities found</td></tr>`;
         }
+
+        resultsContainer.style.display = "block"; // show results now
       } catch (err) {
         console.error(err);
         alert("Error scanning exchanges. Check server logs.");

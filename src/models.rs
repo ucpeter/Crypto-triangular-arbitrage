@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-/// Shared application state (just stores last results for UI if needed)
+/// Shared application state (stores last scan results)
 #[derive(Default)]
 pub struct AppState {
     pub last_results: Option<Vec<TriangularResult>>,
 }
 
-/// Single pair price (normalized)
+/// Single pair price (spot)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairPrice {
     pub base: String,
@@ -30,4 +30,4 @@ pub struct TriangularResult {
 pub struct ScanRequest {
     pub exchanges: Vec<String>,
     pub min_profit: f64,
-}
+    }

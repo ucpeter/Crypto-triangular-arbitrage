@@ -6,153 +6,183 @@
   <style>
     body {
       font-family: Arial, sans-serif;
-      background-color: #f5f7fa;
+      background-color: #121212;
+      color: #e0e0e0;
       margin: 0;
       padding: 0;
     }
     header {
-      background: #1a73e8;
-      color: white;
-      padding: 10px 20px;
+      background: #1e1e1e;
+      padding: 16px;
       text-align: center;
+      font-size: 22px;
+      font-weight: bold;
+      border-bottom: 2px solid #333;
     }
-    .container {
+    .controls {
       padding: 20px;
-      max-width: 1200px;
-      margin: auto;
-    }
-    h2 {
-      font-size: 18px;
-      margin-bottom: 10px;
-      color: #333;
+      background: #1a1a1a;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      align-items: center;
     }
     label {
-      font-size: 14px;
-      display: block;
-      margin-top: 10px;
-      color: #444;
+      font-size: 15px;
     }
-    select, input, button {
-      padding: 8px;
-      margin-top: 5px;
-      border-radius: 5px;
-      border: 1px solid #ccc;
-      font-size: 14px;
+    select, input {
+      padding: 6px;
+      font-size: 15px;
+      border-radius: 6px;
+      border: none;
     }
     button {
-      background-color: #1a73e8;
+      background: #1976d2;
       color: white;
-      font-weight: bold;
       border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
       cursor: pointer;
+      font-size: 15px;
     }
-    button:hover {
-      background-color: #1669c1;
+    button:disabled {
+      background: #444;
+      cursor: not-allowed;
+    }
+    .status {
+      margin-left: 12px;
+      font-style: italic;
+      color: #aaa;
+    }
+    .results-container {
+      padding: 20px;
+    }
+    .scrollable-table {
+      max-height: 500px;
+      overflow-y: auto;
+      overflow-x: auto;
+      border: 1px solid #333;
+      border-radius: 8px;
     }
     table {
       width: 100%;
       border-collapse: collapse;
-      margin-top: 20px;
-      font-size: 13px;
+      min-width: 800px;
+      font-size: 15px; /* slightly bigger */
     }
     th, td {
-      border: 1px solid #ddd;
+      border: 1px solid #333;
+      padding: 8px;
       text-align: center;
-      padding: 6px;
     }
     th {
-      background-color: #1a73e8;
-      color: white;
-      font-size: 13px;
+      background: #222;
+      position: sticky;
+      top: 0;
+      z-index: 1;
     }
     tr:nth-child(even) {
-      background-color: #f2f2f2;
-    }
-    .status {
-      margin-top: 15px;
-      font-size: 13px;
-      color: #555;
+      background: #1c1c1c;
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Triangular Arbitrage Scanner</h1>
-  </header>
-  <div class="container">
-    <h2>Scanner Controls</h2>
-    <label for="exchanges">Select Exchanges (multi-select):</label>
-    <select id="exchanges" multiple size="5" style="width: 300px;">
-      <option value="binance">Binance</option>
-      <option value="kucoin">KuCoin</option>
-      <option value="kraken">Kraken</option>
-      <option value="gateio">Gate.io</option>
-      <option value="bybit">Bybit</option>
-    </select>
+  <header>🔗 Triangular Arbitrage Scanner</header>
 
-    <label for="min_profit">Minimum Profit %:</label>
-    <input id="min_profit" type="number" value="0" step="0.1">
+  <div class="controls">
+    <label>Select Exchanges:
+      <select id="exchanges" multiple size="5">
+        <option value="binance">Binance</option>
+        <option value="kucoin">KuCoin</option>
+        <option value="kraken">Kraken</option>
+        <option value="bybit">Bybit</option>
+        <option value="gate">Gate.io</option>
+      </select>
+    </label>
 
-    <br><br>
-    <button onclick="runScan()">Scan Now</button>
+    <label>Min Profit %:
+      <input type="number" id="min-profit" value="0.5" step="0.1">
+    </label>
 
-    <div class="status" id="status"></div>
+    <button id="scan-btn">Scan Now</button>
+    <span class="status" id="status"></span>
+  </div>
 
-    <table id="resultsTable">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Triangle</th>
-          <th>Pairs</th>
-          <th>Profit Before %</th>
-          <th>Fee %</th>
-          <th>Profit After %</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+  <div class="results-container">
+    <div class="scrollable-table">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Triangle</th>
+            <th>Pairs</th>
+            <th>Profit Before %</th>
+            <th>Fees %</th>
+            <th>Profit After %</th>
+          </tr>
+        </thead>
+        <tbody id="results-body"></tbody>
+      </table>
+    </div>
   </div>
 
   <script>
-    async function runScan() {
-      const exchanges = Array.from(document.getElementById("exchanges").selectedOptions).map(o => o.value);
-      const minProfit = parseFloat(document.getElementById("min_profit").value);
-      const status = document.getElementById("status");
-      const tbody = document.querySelector("#resultsTable tbody");
+    const scanBtn = document.getElementById("scan-btn");
+    const statusEl = document.getElementById("status");
+    const resultsBody = document.getElementById("results-body");
 
-      status.textContent = "🔍 Scanning...";
-      tbody.innerHTML = "";
+    scanBtn.addEventListener("click", async () => {
+      const selectedExchanges = Array.from(
+        document.getElementById("exchanges").selectedOptions
+      ).map(opt => opt.value);
+
+      const minProfit = document.getElementById("min-profit").value;
+
+      if (selectedExchanges.length === 0) {
+        alert("Please select at least one exchange.");
+        return;
+      }
+
+      scanBtn.disabled = true;
+      statusEl.textContent = "🔄 Scanning...";
 
       try {
-        const res = await fetch("/scan", {
+        const resp = await fetch("/scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ exchanges, min_profit: minProfit })
+          body: JSON.stringify({
+            exchanges: selectedExchanges,
+            min_profit: parseFloat(minProfit)
+          })
         });
 
-        const data = await res.json();
-        if (data.status === "success") {
-          status.textContent = `✅ Found ${data.count} opportunities`;
-          data.results.forEach((row, i) => {
-            const tr = document.createElement("tr");
-            tr.innerHTML = `
+        const data = await resp.json();
+
+        resultsBody.innerHTML = "";
+
+        if (data.results && data.results.length > 0) {
+          data.results.forEach((item, i) => {
+            const row = `<tr>
               <td>${i + 1}</td>
-              <td>${row.route}</td>
-              <td>${row.pairs || "-"}</td>
-              <td>${row.profit_before.toFixed(2)}</td>
-              <td>${row.fee.toFixed(2)}</td>
-              <td>${row.profit_after.toFixed(2)}</td>
-            `;
-            tbody.appendChild(tr);
+              <td>${item.triangle}</td>
+              <td>${item.pairs}</td>
+              <td>${item.profit_before.toFixed(2)}</td>
+              <td>${item.fees.toFixed(2)}</td>
+              <td>${item.profit_after.toFixed(2)}</td>
+            </tr>`;
+            resultsBody.innerHTML += row;
           });
         } else {
-          status.textContent = `⚠️ ${data.message}`;
+          resultsBody.innerHTML = `<tr><td colspan="6">No opportunities found</td></tr>`;
         }
       } catch (err) {
-        status.textContent = "❌ Error running scan";
         console.error(err);
+        alert("Error scanning exchanges. Check server logs.");
+      } finally {
+        scanBtn.disabled = false;
+        statusEl.textContent = "";
       }
-    }
+    });
   </script>
 </body>
 </html>

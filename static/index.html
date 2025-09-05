@@ -1,188 +1,227 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html>
 <head>
-  <meta charset="UTF-8">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Triangular Arbitrage Scanner</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background-color: #121212;
-      color: #e0e0e0;
-      margin: 0;
-      padding: 0;
+    :root{
+      --bg:#f4f6f9;
+      --card:#ffffff;
+      --muted:#65737e;
+      --accent:#1e88e5; /* blue */
     }
-    header {
-      background: #1e1e1e;
-      padding: 16px;
-      text-align: center;
-      font-size: 22px;
-      font-weight: bold;
-      border-bottom: 2px solid #333;
+    body{
+      margin:0;
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      background: var(--bg);
+      color: #111827;
     }
-    .controls {
-      padding: 20px;
-      background: #1a1a1a;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 15px;
-      align-items: center;
+    header{
+      display:flex;
+      justify-content:center;
+      padding:36px 16px 10px 16px;
+    }
+    .title-box{
+      background: var(--accent);
+      color: #fff;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-weight:700;
+      font-size:20px;
+      box-shadow: 0 6px 18px rgba(30,136,229,0.12);
+    }
+    .container{
+      max-width: 920px;
+      margin: 18px auto;
+      padding: 0 16px 40px 16px;
+    }
+    .card{
+      background: var(--card);
+      border-radius:12px;
+      padding:18px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.06);
+      margin-bottom: 18px;
     }
     label {
-      font-size: 15px;
+      display:block;
+      color:var(--muted);
+      font-size:15px;
+      margin-bottom:6px;
+      font-weight:600;
     }
-    select, input {
-      padding: 6px;
-      font-size: 15px;
-      border-radius: 6px;
-      border: none;
+    select, input[type="number"]{
+      width:100%;
+      padding:12px 14px;
+      border-radius:8px;
+      border:1px solid #e6eef6;
+      font-size:16px;
+      background:#fff;
     }
-    button {
-      background: #1976d2;
-      color: white;
-      border: none;
-      padding: 10px 16px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 15px;
+    .controls{
+      display:flex;
+      flex-direction:column;
+      gap:14px;
     }
-    button:disabled {
-      background: #444;
-      cursor: not-allowed;
+    button{
+      background: var(--accent);
+      color: #fff;
+      border:none;
+      padding:10px 16px;
+      border-radius:8px;
+      font-weight:700;
+      font-size:16px;
+      cursor:pointer;
+      width:110px;
     }
-    .status {
-      margin-left: 12px;
-      font-style: italic;
-      color: #aaa;
+    .row{
+      display:flex;
+      gap:12px;
+      align-items:center;
+      flex-wrap:wrap;
     }
-    .results-container {
-      padding: 20px;
+    .status{
+      margin-top:6px;
+      font-weight:700;
+      color:#111827;
     }
-    .scrollable-table {
-      max-height: 500px;
-      overflow-y: auto;
-      overflow-x: auto;
-      border: 1px solid #333;
-      border-radius: 8px;
+    /* results */
+    .results { display:none; }
+    .results.visible { display:block; }
+    .table-wrap {
+      overflow:auto;
+      border-radius:8px;
+      border:1px solid #e6eef6;
+      max-height: 520px;
     }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      min-width: 800px;
-      font-size: 15px; /* slightly bigger */
+    table{
+      width:100%;
+      border-collapse:collapse;
+      min-width:900px;
+      font-size:16px;
     }
     th, td {
-      border: 1px solid #333;
-      padding: 8px;
-      text-align: center;
+      padding:12px 10px;
+      border-bottom:1px solid #eef3fb;
+      text-align:center;
     }
-    th {
-      background: #222;
-      position: sticky;
-      top: 0;
-      z-index: 1;
-    }
-    tr:nth-child(even) {
-      background: #1c1c1c;
-    }
+    th { background:#fbfdff; font-weight:700; color:var(--muted); position:sticky; top:0; }
+    tr:nth-child(even) td { background:#fafbfe; }
+    .muted { color:var(--muted); font-size:14px; font-weight:600;}
   </style>
 </head>
 <body>
-  <header>🔗 Triangular Arbitrage Scanner</header>
+  <header>
+    <div class="title-box">Triangular Arbitrage Scanner</div>
+  </header>
 
-  <div class="controls">
-    <label>Select Exchanges:
-      <select id="exchanges" multiple size="5">
-        <option value="binance">Binance</option>
-        <option value="kucoin">KuCoin</option>
-        <option value="kraken">Kraken</option>
-        <option value="bybit">Bybit</option>
-        <option value="gate">Gate.io</option>
-      </select>
-    </label>
+  <div class="container">
+    <div class="card">
+      <div class="muted" style="margin-bottom:10px;">Scanner Controls</div>
+      <div class="controls">
+        <div>
+          <label for="exchange">Exchange:</label>
+          <select id="exchange">
+            <option value="binance">Binance</option>
+            <option value="kucoin">KuCoin</option>
+            <option value="bybit">Bybit</option>
+            <option value="gate">Gate.io</option>
+            <option value="kraken">Kraken</option>
+          </select>
+        </div>
 
-    <label>Min Profit %:
-      <input type="number" id="min-profit" value="0.5" step="0.1">
-    </label>
+        <div>
+          <label for="minprofit">Min profit % (before fees):</label>
+          <input id="minprofit" type="number" step="0.1" value="0.3" />
+        </div>
 
-    <button id="scan-btn">Scan Now</button>
-    <span class="status" id="status"></span>
-  </div>
+        <div class="row">
+          <button id="scanBtn">Scan</button>
+          <div class="status" id="statusText"></div>
+        </div>
+      </div>
+    </div>
 
-  <div class="results-container">
-    <div class="scrollable-table">
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Triangle</th>
-            <th>Pairs</th>
-            <th>Profit Before %</th>
-            <th>Fees %</th>
-            <th>Profit After %</th>
-          </tr>
-        </thead>
-        <tbody id="results-body"></tbody>
-      </table>
+    <div class="card results" id="resultsCard" aria-hidden="true">
+      <div class="muted" style="margin-bottom:8px;">Profitable Opportunities</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Triangle</th>
+              <th>Pairs</th>
+              <th>Profit Before (%)</th>
+              <th>Fees (%)</th>
+              <th>Profit After (%)</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
-  <script>
-    const scanBtn = document.getElementById("scan-btn");
-    const statusEl = document.getElementById("status");
-    const resultsBody = document.getElementById("results-body");
+<script>
+  const scanBtn = document.getElementById('scanBtn');
+  const statusText = document.getElementById('statusText');
+  const exchangeSelect = document.getElementById('exchange');
+  const minProfitInput = document.getElementById('minprofit');
+  const resultsBody = document.getElementById('resultsBody');
+  const resultsCard = document.getElementById('resultsCard');
 
-    scanBtn.addEventListener("click", async () => {
-      const selectedExchanges = Array.from(
-        document.getElementById("exchanges").selectedOptions
-      ).map(opt => opt.value);
+  scanBtn.addEventListener('click', async () => {
+    const exchange = exchangeSelect.value;
+    const minProfit = parseFloat(minProfitInput.value) || 0.0;
 
-      const minProfit = document.getElementById("min-profit").value;
+    statusText.textContent = 'Scanning...';
+    scanBtn.disabled = true;
+    resultsCard.classList.remove('visible');
+    resultsBody.innerHTML = '';
 
-      if (selectedExchanges.length === 0) {
-        alert("Please select at least one exchange.");
+    try {
+      const resp = await fetch('/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exchanges: [exchange], min_profit: minProfit })
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(()=>null);
+        console.error('scan error', resp.status, err);
+        alert('Server error during scan. Check logs.');
+        statusText.textContent = 'Error';
         return;
       }
 
-      scanBtn.disabled = true;
-      statusEl.textContent = "🔄 Scanning...";
-
-      try {
-        const resp = await fetch("/scan", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            exchanges: selectedExchanges,
-            min_profit: parseFloat(minProfit)
-          })
+      const data = await resp.json();
+      const results = data.results || [];
+      if (results.length === 0) {
+        resultsBody.innerHTML = '<tr><td colspan="6">No opportunities found</td></tr>';
+      } else {
+        let html = '';
+        results.forEach((r, i) => {
+          html += `<tr>
+            <td>${i+1}</td>
+            <td>${r.triangle}</td>
+            <td>${r.pairs}</td>
+            <td>${Number(r.profit_before).toFixed(3)}</td>
+            <td>${Number(r.fees).toFixed(3)}</td>
+            <td>${Number(r.profit_after).toFixed(3)}</td>
+          </tr>`;
         });
-
-        const data = await resp.json();
-
-        resultsBody.innerHTML = "";
-
-        if (data.results && data.results.length > 0) {
-          data.results.forEach((item, i) => {
-            const row = `<tr>
-              <td>${i + 1}</td>
-              <td>${item.triangle}</td>
-              <td>${item.pairs}</td>
-              <td>${item.profit_before.toFixed(2)}</td>
-              <td>${item.fees.toFixed(2)}</td>
-              <td>${item.profit_after.toFixed(2)}</td>
-            </tr>`;
-            resultsBody.innerHTML += row;
-          });
-        } else {
-          resultsBody.innerHTML = `<tr><td colspan="6">No opportunities found</td></tr>`;
-        }
-      } catch (err) {
-        console.error(err);
-        alert("Error scanning exchanges. Check server logs.");
-      } finally {
-        scanBtn.disabled = false;
-        statusEl.textContent = "";
+        resultsBody.innerHTML = html;
       }
-    });
-  </script>
+      resultsCard.classList.add('visible');
+      statusText.textContent = `Done — ${results.length} results`;
+    } catch (e) {
+      console.error('fetch failed', e);
+      alert('Error scanning exchanges. Check server logs.');
+      statusText.textContent = 'Error';
+    } finally {
+      scanBtn.disabled = false;
+    }
+  });
+</script>
 </body>
-</html>
+              </html>

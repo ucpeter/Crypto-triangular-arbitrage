@@ -1,7 +1,7 @@
 use axum::{
     extract::{State, Json},
-    response::IntoResponse,
     http::StatusCode,
+    response::IntoResponse,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -10,7 +10,6 @@ use tokio::sync::Mutex;
 use crate::models::{AppState, ScanRequest, TriangularResult, PairPrice};
 use crate::exchanges;
 use crate::logic;
-use futures::future::join_all;
 
 pub async fn ui_handler() -> impl IntoResponse {
     (
@@ -22,46 +21,47 @@ pub async fn ui_handler() -> impl IntoResponse {
     )
 }
 
+/// Scan handler returns Result so we can use `?` nicely
 pub async fn scan_handler(
     State(state): State<Arc<Mutex<AppState>>>,
     Json(payload): Json<ScanRequest>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     tracing::info!(?payload, "received /scan request");
 
-    // fetch all exchanges concurrently via helper
-    let requested = payload.exchanges.clone();
-    if requested.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "no exchanges selected"})));
+    if payload.exchanges.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(json!({"error": "no exchanges selected"}))));
     }
 
-    // spawn fetch tasks and wait
-    let fetches = exchanges::fetch_many(&requested).await; // returns Vec<(name, Vec<PairPrice>)>
+    // 1) fetch pairs for requested exchanges concurrently
+    let fetches = exchanges::fetch_many(&payload.exchanges).await;
 
     // merge pairs
     let mut all_pairs: Vec<PairPrice> = Vec::new();
     for (name, pairs) in fetches.into_iter() {
-        tracing::info!("{} pairs from {}", pairs.len(), name);
+        tracing::info!(exchange = %name, count = pairs.len(), "fetched pairs");
         all_pairs.extend(pairs);
     }
 
-    // Run heavy scan on blocking thread so async reactor not blocked
+    // 2) compute triangles on blocking thread
     let min_profit = payload.min_profit;
     let scan_result: Vec<TriangularResult> = tokio::task::spawn_blocking(move || {
         logic::scan_triangles(&all_pairs, min_profit, 0.1)
-    }).await.map_err(|e| {
-        tracing::error!("scan task join error: {:?}", e);
+    })
+    .await
+    .map_err(|e| {
+        tracing::error!("scan task failed to join: {:?}", e);
         (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "scan task failed"})))
     })?;
 
-    tracing::info!("scan finished, found {}", scan_result.len());
+    tracing::info!(found = scan_result.len(), "scan completed");
 
-    // store results into state briefly
+    // 3) store a copy in shared state
     {
         let mut s = state.lock().await;
         s.last_results = Some(scan_result.clone());
     }
 
-    // prepare JSON response
+    // 4) prepare JSON result
     let results_json: Vec<_> = scan_result.into_iter().map(|r| {
         json!({
             "triangle": r.triangle,
@@ -72,5 +72,5 @@ pub async fn scan_handler(
         })
     }).collect();
 
-    (StatusCode::OK, Json(json!({"status":"success","count": results_json.len(), "results": results_json})))
+    Ok((StatusCode::OK, Json(json!({"status":"success","count": results_json.len(), "results": results_json}))))
 }

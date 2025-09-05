@@ -2,7 +2,7 @@ use crate::models::{PairPrice, TriangularResult};
 use crate::utils;
 use std::collections::{HashMap, HashSet};
 
-/// Scan triangles using only real spot pairs
+/// Strict spot-only triangle scanner. Synchronous CPU work.
 pub fn scan_triangles(prices: &[PairPrice], min_profit: f64, fee_per_leg: f64) -> Vec<TriangularResult> {
     let mut rate: HashMap<(String, String), f64> = HashMap::new();
     let mut neighbors: HashMap<String, HashSet<String>> = HashMap::new();
@@ -62,9 +62,9 @@ pub fn scan_triangles(prices: &[PairPrice], min_profit: f64, fee_per_leg: f64) -
                     out.push(TriangularResult {
                         triangle: format!("{} → {} → {} → {}", a, b, c, a),
                         pairs: format!("{}/{} | {}/{} | {}/{}", a, b, b, c, c, a),
-                        profit_before_fees: utils::round2(profit_before),
-                        trade_fees: utils::round2(total_fee_percent),
-                        profit_after_fees: utils::round2(profit_after),
+                        profit_before_fees: utils::round4(profit_before),
+                        trade_fees: utils::round4(total_fee_percent),
+                        profit_after_fees: utils::round4(profit_after),
                     });
                 }
             }
@@ -76,4 +76,4 @@ pub fn scan_triangles(prices: &[PairPrice], min_profit: f64, fee_per_leg: f64) -
     });
 
     out
-        }
+            }

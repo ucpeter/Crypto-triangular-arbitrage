@@ -1,5 +1,7 @@
 use crate::models::{PairPrice, TriangularResult};
+use crate::utils;
 use std::collections::{HashMap, HashSet};
+use std::cmp::Ordering;
 
 /// Scan triangles using given pair prices (spot)
 /// - prices: slice of PairPrice
@@ -97,22 +99,22 @@ pub fn scan_triangles(
                     }
 
                     out.push(TriangularResult {
-                        triangle: format!("{}/{} -> {}/{} -> {}/{}", a, b, b, c, c, a),
-                        pairs: format!("{}{} | {}/{} | {}/{}", a, b, b, c, c, a),
-                        profit_before: crate::utils::round2(profit_before),
-                        fees: crate::utils::round2(total_fee_percent),
-                        profit_after: crate::utils::round2(profit_after),
+                        triangle: format!("{} → {} → {} → {}", a, b, c, a),
+                        pairs: format!("{}/{} | {}/{} | {}/{}", a, b, b, c, c, a),
+                        profit_before_fees: utils::round4(profit_before),
+                        trade_fees: utils::round4(total_fee_percent),
+                        profit_after_fees: utils::round4(profit_after),
                     });
                 }
             }
         }
     }
 
-    // sort by profit_after desc
+    // sort by profit_after_fees desc
     out.sort_by(|x, y| {
-        y.profit_after
-            .partial_cmp(&x.profit_after)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        y.profit_after_fees
+            .partial_cmp(&x.profit_after_fees)
+            .unwrap_or(Ordering::Equal)
     });
     out
-    }
+                        }

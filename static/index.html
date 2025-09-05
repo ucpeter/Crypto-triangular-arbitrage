@@ -5,17 +5,43 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Triangular Arbitrage Scanner</title>
   <style>
+    
+    }
+ 
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title-box">Triangular Arbitrage Scanner</div>
+  </header>
+
+  <div class="container">
+    <div class="card">
+      <div class="muted" style="margin-bottom:10px;">Scanner Controls</div>
+      <div class="controls">
+        <div>
+          <label for="exchange">Exchange:</label>
+          <select id="exchange">
+            <option value="binance">Binance</option>
+            <option value="kucoin">KuCoin</option>
+            <option value="bybit">Bybit</option>
+            <option value="gate">Gate.io</option>
+            <option value="kraken">Kraken</option>
+          </select>
+        </div>
+        <style>
     :root{
-      --bg:#f4f6f9;
-      --card:#ffffff;
-      --muted:#65737e;
+      --bg:#121212;
+      --card:#1e1e1e;
+      --muted:#9ca3af;
       --accent:#1e88e5; /* blue */
+      --text:#e5e7eb;
     }
     body{
       margin:0;
       font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
       background: var(--bg);
-      color: #111827;
+      color: var(--text);
     }
     header{
       display:flex;
@@ -40,13 +66,13 @@
       background: var(--card);
       border-radius:12px;
       padding:18px;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.06);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.25);
       margin-bottom: 18px;
     }
     label {
       display:block;
       color:var(--muted);
-      font-size:15px;
+      font-size:16px;
       margin-bottom:6px;
       font-weight:600;
     }
@@ -54,9 +80,10 @@
       width:100%;
       padding:12px 14px;
       border-radius:8px;
-      border:1px solid #e6eef6;
+      border:1px solid #374151;
       font-size:16px;
-      background:#fff;
+      background:#111;
+      color: var(--text);
     }
     .controls{
       display:flex;
@@ -83,7 +110,7 @@
     .status{
       margin-top:6px;
       font-weight:700;
-      color:#111827;
+      color:var(--text);
     }
     /* results */
     .results { display:none; }
@@ -91,44 +118,31 @@
     .table-wrap {
       overflow:auto;
       border-radius:8px;
-      border:1px solid #e6eef6;
+      border:1px solid #374151;
       max-height: 520px;
     }
     table{
       width:100%;
       border-collapse:collapse;
       min-width:900px;
-      font-size:18px; /* slightly bigger characters */
+      font-size:16px; /* match label size */
+      color: var(--text);
     }
     th, td {
       padding:12px 10px;
-      border-bottom:1px solid #eef3fb;
+      border-bottom:1px solid #2d2d2d;
       text-align:center;
     }
-    th { background:#fbfdff; font-weight:700; color:var(--muted); position:sticky; top:0; }
-    tr:nth-child(even) td { background:#fafbfe; }
+    th {
+      background: var(--accent);
+      font-weight:700;
+      color:#fff;
+      position:sticky;
+      top:0;
+    }
+    tr:nth-child(even) td { background:#1a1a1a; }
     .muted { color:var(--muted); font-size:14px; font-weight:600;}
-  </style>
-</head>
-<body>
-  <header>
-    <div class="title-box">Triangular Arbitrage Scanner</div>
-  </header>
-
-  <div class="container">
-    <div class="card">
-      <div class="muted" style="margin-bottom:10px;">Scanner Controls</div>
-      <div class="controls">
-        <div>
-          <label for="exchange">Exchange:</label>
-          <select id="exchange">
-            <option value="binance">Binance</option>
-            <option value="kucoin">KuCoin</option>
-            <option value="bybit">Bybit</option>
-            <option value="gate">Gate.io</option>
-            <option value="kraken">Kraken</option>
-          </select>
-        </div>
+        </style>
 
         <div>
           <label for="minprofit">Min profit % (before fees):</label>

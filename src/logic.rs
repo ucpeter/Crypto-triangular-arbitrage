@@ -13,11 +13,15 @@ pub fn scan_triangles(prices: &[PairPrice], min_profit: f64, fee_per_leg: f64) -
         }
         let a = p.base.to_uppercase();
         let b = p.quote.to_uppercase();
-        rate.insert((a.clone(), b.clone()), p.price);
-        neighbors.entry(a.clone()).or_default().insert(b.clone());
-        rate.insert((b.clone(), a.clone()), 1.0 / p.price);
-        neighbors.entry(b.clone()).or_default().insert(a.clone());
-    }
+        // insert direct
+rate.insert((a.clone(), b.clone()), p.price);
+neighbors.entry(a.clone()).or_default().insert(b.clone());
+
+// insert inverse ONLY if the exchange actually provided (b,a) too
+if prices.iter().any(|pp| pp.base.eq_ignore_ascii_case(&b) && pp.quote.eq_ignore_ascii_case(&a)) {
+    rate.insert((b.clone(), a.clone()), 1.0 / p.price);
+    neighbors.entry(b.clone()).or_default().insert(a.clone());
+}
 
     let mut seen: HashSet<(String, String, String)> = HashSet::new();
     let mut out: Vec<TriangularResult> = Vec::new();

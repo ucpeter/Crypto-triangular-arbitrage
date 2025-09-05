@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-/// Shared application state (keeps last results)
+/// Shared application state (just stores last results for UI if needed)
 #[derive(Default)]
 pub struct AppState {
     pub last_results: Option<Vec<TriangularResult>>,
 }
 
-/// Represents a single trading pair price
+/// Single pair price (normalized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairPrice {
     pub base: String,
@@ -15,39 +15,19 @@ pub struct PairPrice {
     pub is_spot: bool,
 }
 
-/// A single triangular arbitrage result
+/// Triangular result passed to UI
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TriangularResult {
-    /// e.g., "USDT → BTC → ETH → USDT"
-    pub triangle: String,
-
-    /// e.g., "USDT/BTC | BTC/ETH | ETH/USDT"
-    pub pairs: String,
-
-    /// Profit before fees (%)
+    pub triangle: String,           // e.g. "USDT → BTC → ETH → USDT"
+    pub pairs: String,              // e.g. "USDT/BTC | BTC/ETH | ETH/USDT"
     pub profit_before_fees: f64,
-
-    /// Total trade fees applied (%)
     pub trade_fees: f64,
-
-    /// Profit after fees (%)
     pub profit_after_fees: f64,
 }
 
-/// Request body for POST /scan
+/// Request body from UI
 #[derive(Debug, Clone, Deserialize)]
 pub struct ScanRequest {
-    /// Exchanges to scan, e.g., ["binance", "kraken"]
     pub exchanges: Vec<String>,
-
-    /// Minimum profit margin (before fees) to include
     pub min_profit: f64,
-}
-
-/// Response wrapper (if you want strong typing, but currently JSON is built in routes)
-#[derive(Debug, Clone, Serialize)]
-pub struct ScanResponse {
-    pub status: String,
-    pub count: usize,
-    pub results: Vec<TriangularResult>,
 }

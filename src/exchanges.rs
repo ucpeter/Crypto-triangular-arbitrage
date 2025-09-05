@@ -1,11 +1,13 @@
 use crate::models::PairPrice;
 use reqwest::Client;
-use std::time::Duration;
 use serde_json::Value;
+use std::time::Duration;
 use futures::future::join_all;
 
-/// Single entry: fetch data for an exchange name (lowercase) and return Vec<PairPrice>
+/// Fetch data for a single exchange by name (lowercase).
+/// Returns Vec<PairPrice> (may be empty on error).
 pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, String> {
+    // single client with timeout
     let client = Client::builder()
         .timeout(Duration::from_secs(10))
         .user_agent("triangular-arb-scanner/1.0")
@@ -22,6 +24,35 @@ pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, Strin
     }
 }
 
+/// Fetch many exchanges concurrently. Returns Vec<(name, pairs)>.
+pub async fn fetch_many(exchanges: &[String]) -> Vec<(String, Vec<PairPrice>)> {
+    let mut handles = Vec::new();
+    for ex in exchanges.iter() {
+        let name = ex.clone();
+        handles.push(tokio::spawn(async move {
+            let res = fetch_exchange_data(&name).await;
+            (name, res)
+        }));
+    }
+
+    let mut out = Vec::new();
+    let results = join_all(handles).await;
+    for r in results {
+        if let Ok((name, res)) = r {
+            match res {
+                Ok(vec) => out.push((name, vec)),
+                Err(err) => {
+                    tracing::error!("fetch {} failed: {}", name, err);
+                    out.push((name, Vec::new()));
+                }
+            }
+        }
+    }
+    out
+}
+
+/* ---------- exchange fetchers ---------- */
+
 async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
     let url = "https://api.binance.com/api/v3/ticker/price";
     tracing::info!("fetching binance");
@@ -30,7 +61,7 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
         return Err(format!("binance status: {}", resp.status()));
     }
     let arr: Vec<Value> = resp.json().await.map_err(|e| format!("binance json error: {}", e))?;
-    let mut out = Vec::with_capacity(arr.len());
+    let mut out = Vec::new();
     for item in arr {
         if let (Some(sym), Some(p)) = (item.get("symbol").and_then(|v| v.as_str()), item.get("price").and_then(|v| v.as_str())) {
             if let Ok(price) = p.parse::<f64>() {
@@ -115,8 +146,8 @@ async fn fetch_gateio(client: &Client) -> Result<Vec<PairPrice>, String> {
 }
 
 async fn fetch_kraken(client: &Client) -> Result<Vec<PairPrice>, String> {
-    // We'll request a small list of common pairs to avoid Kraken pair name complexity for now
-    let url = "https://api.kraken.com/0/public/Ticker?pair=BTCUSD,ETHUSD,ETHXBT,XRPUSD";
+    // keep it limited to a few common pairs to avoid crazy mapping logic
+    let url = "https://api.kraken.com/0/public/Ticker?pair=BTCUSD,ETHUSD";
     tracing::info!("fetching kraken");
     let resp = client.get(url).send().await.map_err(|e| format!("kraken http error: {}", e))?;
     if !resp.status().is_success() {
@@ -128,7 +159,6 @@ async fn fetch_kraken(client: &Client) -> Result<Vec<PairPrice>, String> {
         for (raw_pair, info) in result {
             if let Some(price_str) = info.get("c").and_then(|c| c.get(0)).and_then(|p| p.as_str()) {
                 if let Ok(price) = price_str.parse::<f64>() {
-                    // try normalize
                     let (base, quote) = normalize_kraken_pair(raw_pair);
                     out.push(PairPrice { base, quote, price, is_spot: true });
                 }
@@ -139,27 +169,12 @@ async fn fetch_kraken(client: &Client) -> Result<Vec<PairPrice>, String> {
     Ok(out)
 }
 
-fn normalize_kraken_pair(raw: &str) -> (String, String) {
-    // naive normalization: look for BTC, ETH, USD, XBT etc.
-    let s = raw.to_string();
-    if s.contains("XBT") || s.contains("BTC") {
-        // try to split into readable base/quote
-        if s.ends_with("USD") {
-            return ("BTC".to_string(), "USD".to_string());
-        }
-    }
-    // fallback: split last 3 chars as quote
-    if s.len() > 3 {
-        let (a, b) = s.split_at(s.len()-3);
-        return (a.to_string(), b.to_string());
-    }
-    (s, "USD".to_string())
-}
+/* helpers */
 
-/// Very small helper for Binance-like / Bybit-like symbols (BTCUSDT -> BTC, USDT)
 fn split_symbol(symbol: &str) -> Option<(String, String)> {
+    // try common quote endings
     let qlist = ["USDT", "USDC", "BTC", "ETH", "BUSD", "USD", "EUR"];
-    for q in qlist {
+    for q in qlist.iter() {
         if symbol.ends_with(q) {
             let base = symbol.trim_end_matches(q).to_string();
             return Some((base.to_uppercase(), q.to_string()));
@@ -168,28 +183,18 @@ fn split_symbol(symbol: &str) -> Option<(String, String)> {
     None
 }
 
-/// Concurrently fetch many exchanges (helper)
-pub async fn fetch_many(exchanges: &[String]) -> Vec<(String, Vec<PairPrice>)> {
-    let mut tasks = Vec::new();
-    for ex in exchanges.iter() {
-        let ex_name = ex.clone();
-        tasks.push(tokio::spawn(async move {
-            let res = fetch_exchange_data(&ex_name).await;
-            (ex_name, res)
-        }));
-    }
-    let mut out = Vec::new();
-    let results = join_all(tasks).await;
-    for r in results {
-        if let Ok((name, res)) = r {
-            match res {
-                Ok(vec) => out.push((name, vec)),
-                Err(err) => {
-                    tracing::error!("fetch {} failed: {}", name, err);
-                    out.push((name, Vec::new()));
-                }
-            }
+fn normalize_kraken_pair(raw: &str) -> (String, String) {
+    // small heuristic; Kraken pair names are odd—this keeps it simple
+    let s = raw.to_uppercase();
+    if s.contains("XBT") || s.contains("BTC") {
+        if s.contains("USD") {
+            return ("BTC".to_string(), "USD".to_string());
         }
     }
-    out
+    // fallback split
+    if s.len() > 3 {
+        let (a, b) = s.split_at(s.len() - 3);
+        return (a.to_string(), b.to_string());
+    }
+    (s, "USD".to_string())
     }

@@ -1,167 +1,195 @@
 use crate::models::PairPrice;
 use reqwest::Client;
+use std::time::Duration;
+use serde_json::Value;
+use futures::future::join_all;
 
-/// Fetch normalized spot prices from supported exchanges
+/// Single entry: fetch data for an exchange name (lowercase) and return Vec<PairPrice>
 pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, String> {
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .user_agent("triangular-arb-scanner/1.0")
+        .build()
+        .map_err(|e| format!("client build error: {}", e))?;
 
     match exchange.to_lowercase().as_str() {
-        "binance" => {
-            let url = "https://api.binance.com/api/v3/ticker/price";
-            let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
-            let data: Vec<serde_json::Value> = resp.json().await.map_err(|e| e.to_string())?;
-
-            let mut prices = Vec::new();
-            for item in data {
-                if let (Some(symbol), Some(price_str)) = (item["symbol"].as_str(), item["price"].as_str()) {
-                    if let Ok(price) = price_str.parse::<f64>() {
-                        // crude split base/quote (Binance symbols like BTCUSDT, ETHBTC, etc.)
-                        let (base, quote) = split_symbol(symbol);
-                        prices.push(PairPrice {
-                            base,
-                            quote,
-                            price,
-                            is_spot: true,
-                        });
-                    }
-                }
-            }
-            Ok(prices)
-        }
-
-        "kucoin" => {
-            let url = "https://api.kucoin.com/api/v1/market/allTickers";
-            let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
-            let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-
-            let mut prices = Vec::new();
-            if let Some(tickers) = data["data"]["ticker"].as_array() {
-                for item in tickers {
-                    if let (Some(symbol), Some(price_str)) = (item["symbol"].as_str(), item["last"].as_str()) {
-                        if let Ok(price) = price_str.parse::<f64>() {
-                            if let Some((base, quote)) = symbol.split_once('-') {
-                                prices.push(PairPrice {
-                                    base: base.to_string(),
-                                    quote: quote.to_string(),
-                                    price,
-                                    is_spot: true,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            Ok(prices)
-        }
-
-        "kraken" => {
-            let url = "https://api.kraken.com/0/public/Ticker?pair=BTCUSD,ETHUSD,ETHBTC";
-            let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
-            let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-
-            let mut prices = Vec::new();
-            if let Some(result) = data["result"].as_object() {
-                for (pair, info) in result {
-                    if let Some(price_str) = info["c"][0].as_str() {
-                        if let Ok(price) = price_str.parse::<f64>() {
-                            // Kraken symbols are funky, e.g., XXBTZUSD → BTC/USD
-                            let (base, quote) = normalize_kraken_symbol(pair);
-                            prices.push(PairPrice {
-                                base,
-                                quote,
-                                price,
-                                is_spot: true,
-                            });
-                        }
-                    }
-                }
-            }
-            Ok(prices)
-        }
-
-        "bybit" => {
-            let url = "https://api.bybit.com/v5/market/tickers?category=spot";
-            let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
-            let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-
-            let mut prices = Vec::new();
-            if let Some(list) = data["result"]["list"].as_array() {
-                for item in list {
-                    if let (Some(symbol), Some(price_str)) = (item["symbol"].as_str(), item["lastPrice"].as_str()) {
-                        if let Ok(price) = price_str.parse::<f64>() {
-                            if let Some((base, quote)) = split_symbol_bybit(symbol) {
-                                prices.push(PairPrice {
-                                    base,
-                                    quote,
-                                    price,
-                                    is_spot: true,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            Ok(prices)
-        }
-
-        "gate" | "gateio" => {
-            let url = "https://api.gateio.ws/api/v4/spot/tickers";
-            let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
-            let data: Vec<serde_json::Value> = resp.json().await.map_err(|e| e.to_string())?;
-
-            let mut prices = Vec::new();
-            for item in data {
-                if let (Some(symbol), Some(price_str)) = (item["currency_pair"].as_str(), item["last"].as_str()) {
-                    if let Ok(price) = price_str.parse::<f64>() {
-                        if let Some((base, quote)) = symbol.split_once('_') {
-                            prices.push(PairPrice {
-                                base: base.to_uppercase(),
-                                quote: quote.to_uppercase(),
-                                price,
-                                is_spot: true,
-                            });
-                        }
-                    }
-                }
-            }
-            Ok(prices)
-        }
-
-        _ => Err(format!("Exchange {} not supported", exchange)),
+        "binance" => fetch_binance(&client).await,
+        "kucoin" => fetch_kucoin(&client).await,
+        "bybit" => fetch_bybit(&client).await,
+        "gate" | "gateio" => fetch_gateio(&client).await,
+        "kraken" => fetch_kraken(&client).await,
+        other => Err(format!("unsupported exchange: {}", other)),
     }
 }
 
-/// Split Binance-style symbols (BTCUSDT → BTC, USDT)
-fn split_symbol(symbol: &str) -> (String, String) {
-    let quotes = ["USDT", "BTC", "ETH", "BUSD", "USDC", "EUR", "USD"];
-    for q in quotes {
-        if symbol.ends_with(q) {
-            let base = symbol.trim_end_matches(q).to_string();
-            return (base, q.to_string());
+async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
+    let url = "https://api.binance.com/api/v3/ticker/price";
+    tracing::info!("fetching binance");
+    let resp = client.get(url).send().await.map_err(|e| format!("binance http error: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("binance status: {}", resp.status()));
+    }
+    let arr: Vec<Value> = resp.json().await.map_err(|e| format!("binance json error: {}", e))?;
+    let mut out = Vec::with_capacity(arr.len());
+    for item in arr {
+        if let (Some(sym), Some(p)) = (item.get("symbol").and_then(|v| v.as_str()), item.get("price").and_then(|v| v.as_str())) {
+            if let Ok(price) = p.parse::<f64>() {
+                if let Some((base, quote)) = split_symbol(sym) {
+                    out.push(PairPrice { base, quote, price, is_spot: true });
+                }
+            }
         }
     }
-    (symbol.to_string(), "".to_string())
+    tracing::info!("binance returned {} pairs", out.len());
+    Ok(out)
 }
 
-/// Split Bybit symbols (e.g., ETHUSDT → ETH/USDT)
-fn split_symbol_bybit(symbol: &str) -> Option<(String, String)> {
-    let quotes = ["USDT", "USDC", "BTC", "ETH"];
-    for q in quotes {
+async fn fetch_kucoin(client: &Client) -> Result<Vec<PairPrice>, String> {
+    let url = "https://api.kucoin.com/api/v1/market/allTickers";
+    tracing::info!("fetching kucoin");
+    let resp = client.get(url).send().await.map_err(|e| format!("kucoin http error: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("kucoin status: {}", resp.status()));
+    }
+    let v: Value = resp.json().await.map_err(|e| format!("kucoin json error: {}", e))?;
+    let mut out = Vec::new();
+    if let Some(arr) = v.get("data").and_then(|d| d.get("ticker")).and_then(|t| t.as_array()) {
+        for item in arr {
+            if let (Some(sym), Some(last)) = (item.get("symbol").and_then(|s| s.as_str()), item.get("last").and_then(|s| s.as_str())) {
+                if let Ok(price) = last.parse::<f64>() {
+                    if let Some((base, quote)) = sym.split_once('-') {
+                        out.push(PairPrice { base: base.to_uppercase(), quote: quote.to_uppercase(), price, is_spot: true });
+                    }
+                }
+            }
+        }
+    }
+    tracing::info!("kucoin returned {} pairs", out.len());
+    Ok(out)
+}
+
+async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
+    let url = "https://api.bybit.com/v5/market/tickers?category=spot";
+    tracing::info!("fetching bybit");
+    let resp = client.get(url).send().await.map_err(|e| format!("bybit http error: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("bybit status: {}", resp.status()));
+    }
+    let v: Value = resp.json().await.map_err(|e| format!("bybit json error: {}", e))?;
+    let mut out = Vec::new();
+    if let Some(list) = v.get("result").and_then(|r| r.get("list")).and_then(|l| l.as_array()) {
+        for item in list {
+            if let (Some(sym), Some(last)) = (item.get("symbol").and_then(|s| s.as_str()), item.get("lastPrice").and_then(|s| s.as_str())) {
+                if let Ok(price) = last.parse::<f64>() {
+                    if let Some((base, quote)) = split_symbol(sym) {
+                        out.push(PairPrice { base, quote, price, is_spot: true });
+                    }
+                }
+            }
+        }
+    }
+    tracing::info!("bybit returned {} pairs", out.len());
+    Ok(out)
+}
+
+async fn fetch_gateio(client: &Client) -> Result<Vec<PairPrice>, String> {
+    let url = "https://api.gateio.ws/api/v4/spot/tickers";
+    tracing::info!("fetching gateio");
+    let resp = client.get(url).send().await.map_err(|e| format!("gateio http error: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("gateio status: {}", resp.status()));
+    }
+    let arr: Vec<Value> = resp.json().await.map_err(|e| format!("gateio json error: {}", e))?;
+    let mut out = Vec::new();
+    for item in arr {
+        if let (Some(pair), Some(last)) = (item.get("currency_pair").and_then(|s| s.as_str()), item.get("last").and_then(|s| s.as_str())) {
+            if let Ok(price) = last.parse::<f64>() {
+                if let Some((base, quote)) = pair.split_once('_') {
+                    out.push(PairPrice { base: base.to_uppercase(), quote: quote.to_uppercase(), price, is_spot: true });
+                }
+            }
+        }
+    }
+    tracing::info!("gateio returned {} pairs", out.len());
+    Ok(out)
+}
+
+async fn fetch_kraken(client: &Client) -> Result<Vec<PairPrice>, String> {
+    // We'll request a small list of common pairs to avoid Kraken pair name complexity for now
+    let url = "https://api.kraken.com/0/public/Ticker?pair=BTCUSD,ETHUSD,ETHXBT,XRPUSD";
+    tracing::info!("fetching kraken");
+    let resp = client.get(url).send().await.map_err(|e| format!("kraken http error: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("kraken status: {}", resp.status()));
+    }
+    let v: Value = resp.json().await.map_err(|e| format!("kraken json error: {}", e))?;
+    let mut out = Vec::new();
+    if let Some(result) = v.get("result").and_then(|r| r.as_object()) {
+        for (raw_pair, info) in result {
+            if let Some(price_str) = info.get("c").and_then(|c| c.get(0)).and_then(|p| p.as_str()) {
+                if let Ok(price) = price_str.parse::<f64>() {
+                    // try normalize
+                    let (base, quote) = normalize_kraken_pair(raw_pair);
+                    out.push(PairPrice { base, quote, price, is_spot: true });
+                }
+            }
+        }
+    }
+    tracing::info!("kraken returned {} pairs", out.len());
+    Ok(out)
+}
+
+fn normalize_kraken_pair(raw: &str) -> (String, String) {
+    // naive normalization: look for BTC, ETH, USD, XBT etc.
+    let s = raw.to_string();
+    if s.contains("XBT") || s.contains("BTC") {
+        // try to split into readable base/quote
+        if s.ends_with("USD") {
+            return ("BTC".to_string(), "USD".to_string());
+        }
+    }
+    // fallback: split last 3 chars as quote
+    if s.len() > 3 {
+        let (a, b) = s.split_at(s.len()-3);
+        return (a.to_string(), b.to_string());
+    }
+    (s, "USD".to_string())
+}
+
+/// Very small helper for Binance-like / Bybit-like symbols (BTCUSDT -> BTC, USDT)
+fn split_symbol(symbol: &str) -> Option<(String, String)> {
+    let qlist = ["USDT", "USDC", "BTC", "ETH", "BUSD", "USD", "EUR"];
+    for q in qlist {
         if symbol.ends_with(q) {
             let base = symbol.trim_end_matches(q).to_string();
-            return Some((base, q.to_string()));
+            return Some((base.to_uppercase(), q.to_string()));
         }
     }
     None
 }
 
-/// Normalize Kraken symbols to readable base/quote
-fn normalize_kraken_symbol(raw: &str) -> (String, String) {
-    let mut base = raw.chars().take(3).collect::<String>();
-    let mut quote = raw.chars().skip(3).collect::<String>();
-
-    base = base.replace("XBT", "BTC").replace("XETH", "ETH");
-    quote = quote.replace("ZUSD", "USD").replace("ZEUR", "EUR");
-
-    (base, quote)
-                        }
+/// Concurrently fetch many exchanges (helper)
+pub async fn fetch_many(exchanges: &[String]) -> Vec<(String, Vec<PairPrice>)> {
+    let mut tasks = Vec::new();
+    for ex in exchanges.iter() {
+        let ex_name = ex.clone();
+        tasks.push(tokio::spawn(async move {
+            let res = fetch_exchange_data(&ex_name).await;
+            (ex_name, res)
+        }));
+    }
+    let mut out = Vec::new();
+    let results = join_all(tasks).await;
+    for r in results {
+        if let Ok((name, res)) = r {
+            match res {
+                Ok(vec) => out.push((name, vec)),
+                Err(err) => {
+                    tracing::error!("fetch {} failed: {}", name, err);
+                    out.push((name, Vec::new()));
+                }
+            }
+        }
+    }
+    out
+    }

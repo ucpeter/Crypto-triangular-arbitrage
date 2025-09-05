@@ -3,79 +3,55 @@ use crate::utils;
 use std::collections::{HashMap, HashSet};
 use std::cmp::Ordering;
 
-/// Scan triangles using given pair prices (spot)
-/// - prices: slice of PairPrice
-/// - min_profit: minimum % BEFORE fees to include (e.g., 0.3)
-/// - fee_per_leg: percent per leg (e.g., 0.1 for 0.1%)
-pub fn scan_triangles(
-    prices: &[PairPrice],
-    min_profit: f64,
-    fee_per_leg: f64,
-) -> Vec<TriangularResult> {
+/// Build directed graph from prices: for every real pair (A/B) we insert
+/// A -> B with price p and B -> A with 1/p (both are derived from a real pair).
+/// Then we search triangles a -> b -> c -> a where all three directed edges exist.
+pub fn scan_triangles(prices: &[PairPrice], min_profit: f64, fee_per_leg: f64) -> Vec<TriangularResult> {
     let mut rate: HashMap<(String, String), f64> = HashMap::new();
     let mut neighbors: HashMap<String, HashSet<String>> = HashMap::new();
 
-    // Build graph strictly with spot pairs only
+    // insert edges for each real pair
     for p in prices {
         if !p.is_spot || !p.price.is_finite() || p.price <= 0.0 {
-            continue; // skip non-spot or invalid price
+            continue;
         }
-
         let a = p.base.to_uppercase();
         let b = p.quote.to_uppercase();
-
-        // insert direct
+        // direct
         rate.insert((a.clone(), b.clone()), p.price);
         neighbors.entry(a.clone()).or_default().insert(b.clone());
-
-        // insert inverse ONLY if the exchange actually provided (b,a) too
-        if prices.iter().any(|pp| {
-            pp.base.eq_ignore_ascii_case(&b) && pp.quote.eq_ignore_ascii_case(&a)
-        }) {
+        // inverse (derived from the real pair)
+        if p.price.is_finite() && p.price > 0.0 {
             rate.insert((b.clone(), a.clone()), 1.0 / p.price);
             neighbors.entry(b.clone()).or_default().insert(a.clone());
         }
     }
 
-    let mut seen: HashSet<(String, String, String)> = HashSet::new();
-    let mut out: Vec<TriangularResult> = Vec::new();
     let fee_mult_one = 1.0 - (fee_per_leg / 100.0);
     let total_fee_percent = 3.0 * fee_per_leg;
 
+    let mut seen: HashSet<(String, String, String)> = HashSet::new();
+    let mut out: Vec<TriangularResult> = Vec::new();
+
+    // iterate vertices
     for (a, bs) in &neighbors {
         for b in bs {
-            if a == b {
-                continue;
-            }
+            if a == b { continue; }
             if let Some(cs) = neighbors.get(b) {
                 for c in cs {
-                    if c == a || c == b {
-                        continue;
-                    }
+                    if c == a || c == b { continue; }
                     // must have edge c -> a
                     if !neighbors.get(c).map_or(false, |s| s.contains(a)) {
                         continue;
                     }
 
-                    // lookup rates
-                    let r1 = match rate.get(&(a.clone(), b.clone())) {
-                        Some(v) => *v,
-                        None => continue,
-                    };
-                    let r2 = match rate.get(&(b.clone(), c.clone())) {
-                        Some(v) => *v,
-                        None => continue,
-                    };
-                    let r3 = match rate.get(&(c.clone(), a.clone())) {
-                        Some(v) => *v,
-                        None => continue,
-                    };
+                    let r1 = match rate.get(&(a.clone(), b.clone())) { Some(v) => *v, None => continue };
+                    let r2 = match rate.get(&(b.clone(), c.clone())) { Some(v) => *v, None => continue };
+                    let r3 = match rate.get(&(c.clone(), a.clone())) { Some(v) => *v, None => continue };
 
-                    // gross cycle multiplier
                     let gross = r1 * r2 * r3;
                     let profit_before = (gross - 1.0) * 100.0;
 
-                    // sanity checks
                     if !profit_before.is_finite() || profit_before <= 0.0 {
                         continue;
                     }
@@ -83,11 +59,10 @@ pub fn scan_triangles(
                         continue;
                     }
 
-                    // apply fees multiplicatively
                     let net = (r1 * fee_mult_one) * (r2 * fee_mult_one) * (r3 * fee_mult_one);
                     let profit_after = (net - 1.0) * 100.0;
 
-                    // canonical dedupe key
+                    // canonical key to avoid duplicates
                     let reps = vec![
                         (a.clone(), b.clone(), c.clone()),
                         (b.clone(), c.clone(), a.clone()),
@@ -110,11 +85,10 @@ pub fn scan_triangles(
         }
     }
 
-    // sort by profit_after_fees desc
+    // sort desc
     out.sort_by(|x, y| {
-        y.profit_after_fees
-            .partial_cmp(&x.profit_after_fees)
-            .unwrap_or(Ordering::Equal)
+        y.profit_after_fees.partial_cmp(&x.profit_after_fees).unwrap_or(Ordering::Equal)
     });
+
     out
-                        }
+                    }

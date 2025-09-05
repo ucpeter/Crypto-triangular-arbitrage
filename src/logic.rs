@@ -2,66 +2,42 @@ use crate::models::{PairPrice, TriangularResult};
 use crate::utils;
 use std::collections::{HashMap, HashSet};
 
-/// Scan all possible triangles from spot market prices
-/// - prices: slice of PairPrice
-/// - min_profit: minimum % before fees
-/// - fee_per_leg: % fee per trade leg (e.g. 0.1 = 0.1%)
+/// Scan triangles using only real spot pairs
 pub fn scan_triangles(prices: &[PairPrice], min_profit: f64, fee_per_leg: f64) -> Vec<TriangularResult> {
     let mut rate: HashMap<(String, String), f64> = HashMap::new();
     let mut neighbors: HashMap<String, HashSet<String>> = HashMap::new();
 
-    // Build graph with only valid spot pairs
     for p in prices {
         if !p.is_spot || !p.price.is_finite() || p.price <= 0.0 {
             continue;
         }
-
         let a = p.base.to_uppercase();
         let b = p.quote.to_uppercase();
-
-        // direct edge
         rate.insert((a.clone(), b.clone()), p.price);
         neighbors.entry(a.clone()).or_default().insert(b.clone());
-
-        // inverse edge
         rate.insert((b.clone(), a.clone()), 1.0 / p.price);
         neighbors.entry(b.clone()).or_default().insert(a.clone());
     }
 
     let mut seen: HashSet<(String, String, String)> = HashSet::new();
     let mut out: Vec<TriangularResult> = Vec::new();
+
     let fee_mult_one = 1.0 - (fee_per_leg / 100.0);
     let total_fee_percent = 3.0 * fee_per_leg;
 
-    // Explore triangles
     for (a, bs) in &neighbors {
         for b in bs {
-            if a == b {
-                continue;
-            }
+            if a == b { continue; }
             if let Some(cs) = neighbors.get(b) {
                 for c in cs {
-                    if c == a || c == b {
-                        continue;
-                    }
-                    // must close the loop
+                    if c == a || c == b { continue; }
                     if !neighbors.get(c).map_or(false, |s| s.contains(a)) {
                         continue;
                     }
 
-                    // look up rates
-                    let r1 = match rate.get(&(a.clone(), b.clone())) {
-                        Some(v) => *v,
-                        None => continue,
-                    };
-                    let r2 = match rate.get(&(b.clone(), c.clone())) {
-                        Some(v) => *v,
-                        None => continue,
-                    };
-                    let r3 = match rate.get(&(c.clone(), a.clone())) {
-                        Some(v) => *v,
-                        None => continue,
-                    };
+                    let r1 = match rate.get(&(a.clone(), b.clone())) { Some(v) => *v, None => continue };
+                    let r2 = match rate.get(&(b.clone(), c.clone())) { Some(v) => *v, None => continue };
+                    let r3 = match rate.get(&(c.clone(), a.clone())) { Some(v) => *v, None => continue };
 
                     let gross = r1 * r2 * r3;
                     let profit_before = (gross - 1.0) * 100.0;
@@ -70,11 +46,9 @@ pub fn scan_triangles(prices: &[PairPrice], min_profit: f64, fee_per_leg: f64) -
                         continue;
                     }
 
-                    // apply fees
                     let net = (r1 * fee_mult_one) * (r2 * fee_mult_one) * (r3 * fee_mult_one);
                     let profit_after = (net - 1.0) * 100.0;
 
-                    // dedupe
                     let reps = vec![
                         (a.clone(), b.clone(), c.clone()),
                         (b.clone(), c.clone(), a.clone()),
@@ -97,11 +71,9 @@ pub fn scan_triangles(prices: &[PairPrice], min_profit: f64, fee_per_leg: f64) -
         }
     }
 
-    // sort best → worst
     out.sort_by(|x, y| {
-        y.profit_after_fees
-            .partial_cmp(&x.profit_after_fees)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        y.profit_after_fees.partial_cmp(&x.profit_after_fees).unwrap_or(std::cmp::Ordering::Equal)
     });
+
     out
         }

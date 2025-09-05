@@ -98,7 +98,7 @@
       width:100%;
       border-collapse:collapse;
       min-width:900px;
-      font-size:16px;
+      font-size:18px; /* slightly bigger characters */
     }
     th, td {
       padding:12px 10px;
@@ -170,6 +170,7 @@
   const resultsBody = document.getElementById('resultsBody');
   const resultsCard = document.getElementById('resultsCard');
 
+  // selecting exchange auto-applies (no OK needed) — select's value is used on Scan
   scanBtn.addEventListener('click', async () => {
     const exchange = exchangeSelect.value;
     const minProfit = parseFloat(minProfitInput.value) || 0.0;
@@ -191,6 +192,7 @@
         console.error('scan error', resp.status, err);
         alert('Server error during scan. Check logs.');
         statusText.textContent = 'Error';
+        scanBtn.disabled = false;
         return;
       }
 
@@ -224,4 +226,4 @@
   });
 </script>
 </body>
-              </html>
+</html>

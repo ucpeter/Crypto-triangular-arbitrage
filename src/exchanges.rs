@@ -2,6 +2,7 @@ use crate::models::PairPrice;
 use reqwest::Client;
 use serde::Deserialize;
 use std::error::Error;
+use std::collections::HashMap;
 
 //
 // BINANCE
@@ -187,4 +188,21 @@ pub async fn fetch_gateio(client: &Client) -> Result<Vec<PairPrice>, Box<dyn Err
     }
 
     Ok(out)
+}
+pub async fn fetch_many(exchanges: Vec<String>) -> HashMap<String, Vec<PairPrice>> {
+    let mut results = HashMap::new();
+
+    for ex in exchanges {
+        match fetch_exchange_data(&ex).await {
+            Ok(pairs) => {
+                results.insert(ex.clone(), pairs);
+            }
+            Err(e) => {
+                tracing::error!("❌ Error fetching data from {}: {:?}", ex, e);
+                results.insert(ex.clone(), Vec::new());
+            }
+        }
+    }
+
+    results
 }

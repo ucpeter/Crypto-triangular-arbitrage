@@ -11,45 +11,78 @@ pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, Box<d
 
     match exchange {
         // ---------------- Binance ----------------
-        "binance" => {
-            let url = "https://api.binance.com/api/v3/ticker/price";
-            let resp: Value = client.get(url).send().await?.json().await?;
-            if let Some(arr) = resp.as_array() {
-                for obj in arr {
-                    if let (Some(symbol), Some(price_str)) =
-                        (obj.get("symbol"), obj.get("price"))
-                    {
-                        let symbol = symbol.as_str().unwrap().to_uppercase();
-                        let price: f64 = price_str.as_str().unwrap().parse().unwrap_or(0.0);
-
-                        // Binance uses concatenated symbols e.g. BTCUSDT
-                        let known_quotes = ["USDT", "USDC", "BTC", "ETH", "BNB", "BUSD", "TUSD"];
-                        let mut base = None;
-                        let mut quote = None;
-
-                        for q in &known_quotes {
-                            if symbol.ends_with(q) {
-                                let len = symbol.len() - q.len();
-                                base = Some(symbol[..len].to_string());
-                                quote = Some(q.to_string());
-                                break;
-                            }
-                        }
-
-                        if let (Some(b), Some(q)) = (base, quote) {
-                            if price > 0.0 {
-                                out.push(PairPrice {
-                                    base: b,
-                                    quote: q,
-                                    price,
-                                    is_spot: true,
-                                });
+"binance" => {
+    // Use exchangeInfo instead of ticker/price for proper base/quote
+    let url = "https://api.binance.com/api/v3/exchangeInfo";
+    let resp: Value = client.get(url).send().await?.json().await?;
+    if let Some(arr) = resp["symbols"].as_array() {
+        for obj in arr {
+            if obj["status"] == "TRADING" && obj["isSpotTradingAllowed"] == true {
+                if let (Some(base), Some(quote)) =
+                    (obj.get("baseAsset"), obj.get("quoteAsset"))
+                {
+                    let base = base.as_str().unwrap().to_uppercase();
+                    let quote = quote.as_str().unwrap().to_uppercase();
+                    // Now get price from ticker/price
+                    let sym = obj["symbol"].as_str().unwrap();
+                    let price_url = format!("https://api.binance.com/api/v3/ticker/price?symbol={}", sym);
+                    if let Ok(p) = client.get(&price_url).send().await?.json::<Value>().await {
+                        if let Some(price_str) = p["price"].as_str() {
+                            if let Ok(price) = price_str.parse::<f64>() {
+                                if price > 0.0 {
+                                    out.push(PairPrice {
+                                        base,
+                                        quote,
+                                        price,
+                                        is_spot: true,
+                                    });
+                                }
                             }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+// ---------------- Bybit ----------------
+"bybit" => {
+    // Instruments-info gives proper spot pairs
+    let url = "https://api.bybit.com/v5/market/instruments-info?category=spot";
+    let resp: Value = client.get(url).send().await?.json().await?;
+    if let Some(arr) = resp["result"]["list"].as_array() {
+        for obj in arr {
+            if let (Some(base), Some(quote), Some(sym)) =
+                (obj.get("baseCoin"), obj.get("quoteCoin"), obj.get("symbol"))
+            {
+                let base = base.as_str().unwrap().to_uppercase();
+                let quote = quote.as_str().unwrap().to_uppercase();
+                let symbol = sym.as_str().unwrap();
+                let price_url = format!("https://api.bybit.com/v5/market/tickers?category=spot&symbol={}", symbol);
+                if let Ok(p) = client.get(&price_url).send().await?.json::<Value>().await {
+                    if let Some(list) = p["result"]["list"].as_array() {
+                        if let Some(first) = list.first() {
+                            if let Some(price_str) = first["lastPrice"].as_str() {
+                                if let Ok(price) = price_str.parse::<f64>() {
+                                    if price > 0.0 {
+                                        out.push(PairPrice {
+                                            base,
+                                            quote,
+                                            price,
+                                            is_spot: true,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+        }
+        
 
         // ---------------- KuCoin ----------------
         "kucoin" => {
@@ -78,32 +111,7 @@ pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, Box<d
             }
         }
 
-        // ---------------- Bybit ----------------
-        "bybit" => {
-            let url = "https://api.bybit.com/v5/market/tickers?category=spot";
-            let resp: Value = client.get(url).send().await?.json().await?;
-            if let Some(arr) = resp["result"]["list"].as_array() {
-                for obj in arr {
-                    if let (Some(symbol), Some(price_str)) =
-                        (obj.get("symbol"), obj.get("lastPrice"))
-                    {
-                        let symbol = symbol.as_str().unwrap().to_uppercase();
-                        let price: f64 = price_str.as_str().unwrap().parse().unwrap_or(0.0);
-
-                        if let Some((base, quote)) = split_symbol(&symbol) {
-                            if price > 0.0 {
-                                out.push(PairPrice {
-                                    base,
-                                    quote,
-                                    price,
-                                    is_spot: true,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        
 
         // ---------------- Gate.io ----------------
         "gate" | "gateio" => {

@@ -147,7 +147,7 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
 
     info!("bybit returned {} pairs", out.len());
     Ok(out)
-            }
+}
 
 /// ----------------- GATE.IO -----------------
 pub async fn fetch_gateio(client: &Client) -> Result<Vec<PairPrice>, String> {

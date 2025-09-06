@@ -217,5 +217,4 @@ pub async fn fetch_gateio(client: &Client) -> Result<Vec<PairPrice>, String> {
     }
 
     info!("gateio returned {} spot pairs", out.len());
-    Ok(out)
-        }
+    Ok(out)}

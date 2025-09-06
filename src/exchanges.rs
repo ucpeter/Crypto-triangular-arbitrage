@@ -219,4 +219,4 @@ pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, Strin
         "bybit" => fetch_bybit(&client).await,
         _ => Err(format!("unsupported exchange: {}", exchange)),
     }
-}
+}}

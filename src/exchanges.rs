@@ -34,6 +34,9 @@ pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, Box<d
                     }
                 }
             }
+        }
+    }
+
 
             // Get all live prices in one call
             let price_url = "https://api.binance.com/api/v3/ticker/price";

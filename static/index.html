@@ -4,129 +4,206 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Triangular Arbitrage Scanner</title>
-  <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body {
-      background-color: #111827; /* dark theme */
-      color: #f9fafb;
-      font-family: system-ui, sans-serif;
+      font-family: Arial, sans-serif;
+      background-color: #0d1117;
+      color: #e6edf3;
+      margin: 0;
+      padding: 20px;
     }
+
+    .title {
+      display: inline-block;
+      background-color: #007bff;
+      color: white;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 20px;
+      font-weight: bold;
+      margin-bottom: 20px;
+    }
+
     .controls {
       display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 20px;
     }
-    @media (min-width: 768px) {
-      .controls {
-        flex-direction: row;
-        align-items: center;
-      }
+
+    .controls label {
+      font-weight: bold;
+      font-size: 14px;
+      display: block;
+      margin-bottom: 4px;
     }
-    th {
-      color: #2563eb; /* blue header text */
+
+    .controls select,
+    .controls input {
+      padding: 6px;
+      font-size: 14px;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      background-color: #161b22;
+      color: #e6edf3;
+      width: 200px;
     }
-    .profit-positive { color: #10b981; font-weight: 600; } /* green */
-    .profit-negative { color: #ef4444; font-weight: 600; } /* red */
-    .results-table {
-      max-height: 70vh;   /* taller scrollable area */
-      overflow-y: auto;
+
+    .controls button {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      font-size: 14px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .controls button:hover {
+      background-color: #0056b3;
+    }
+
+    .table-container {
       overflow-x: auto;
+      overflow-y: auto;
+      max-height: 500px; /* slightly taller than screenshot */
+      border: 1px solid #30363d;
+      border-radius: 6px;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 700px;
+    }
+
+    thead {
+      background-color: #007bff;
+      color: white;
+    }
+
+    th, td {
+      padding: 10px;
+      border: 1px solid #30363d;
+      text-align: left;
+      font-size: 14px; /* same size as screenshot */
+    }
+
+    .profit-positive {
+      color: #4caf50;
+      font-weight: bold;
+    }
+
+    .profit-negative {
+      color: #f44336;
+      font-weight: bold;
+    }
+
+    @media (max-width: 768px) {
+      .controls {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .controls select,
+      .controls input {
+        width: 100%;
+      }
+
+      .controls button {
+        width: 100%;
+      }
     }
   </style>
 </head>
-<body class="p-4">
-  <!-- Scanner Title -->
-  <div class="text-center mb-6">
-    <h1 class="inline-block bg-blue-600 text-white px-4 py-2 rounded-lg text-2xl font-bold">
-      Triangular Arbitrage Scanner
-    </h1>
-  </div>
+<body>
+  <div class="title">Triangular Arbitrage Scanner</div>
 
-  <!-- Scanner Controls -->
-  <div class="controls mb-6 justify-center">
+  <div class="controls">
     <div>
-      <label for="exchange" class="block mb-1">Exchange:</label>
-      <select id="exchange" class="p-2 rounded bg-gray-800 text-white w-48">
+      <label for="exchange">Exchange:</label>
+      <select id="exchange">
         <option value="binance">Binance</option>
         <option value="bybit">Bybit</option>
         <option value="kucoin">KuCoin</option>
         <option value="gate">Gate.io</option>
       </select>
     </div>
+
     <div>
-      <label for="minProfit" class="block mb-1">Min profit % (before fees):</label>
-      <input id="minProfit" type="number" step="0.1" value="0.3" 
-        class="p-2 rounded bg-gray-800 text-white w-32" />
+      <label for="minProfit">Min profit % (before fees):</label>
+      <input type="number" id="minProfit" step="0.1" value="0.3" />
     </div>
-    <div class="flex items-end">
-      <button onclick="startScan()" 
-        class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-white font-medium">
-        Scan
-      </button>
+
+    <div>
+      <label>&nbsp;</label>
+      <button onclick="runScan()">Scan</button>
     </div>
   </div>
 
-  <!-- Results -->
-  <div id="results"></div>
+  <div id="status">Idle</div>
+  <div class="table-container">
+    <table id="resultsTable" style="display: none;">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Triangle</th>
+          <th>Pairs</th>
+          <th>Profit Before %</th>
+          <th>Fees %</th>
+          <th>Profit After %</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
 
   <script>
-    async function startScan() {
-      const exchange = document.getElementById('exchange').value;
-      const minProfit = parseFloat(document.getElementById('minProfit').value);
-      const resultsDiv = document.getElementById('results');
+    async function runScan() {
+      const exchange = document.getElementById("exchange").value;
+      const minProfit = parseFloat(document.getElementById("minProfit").value);
+      const status = document.getElementById("status");
+      const table = document.getElementById("resultsTable");
+      const tbody = table.querySelector("tbody");
 
-      resultsDiv.innerHTML = `<p class="text-center text-gray-400">Scanning ${exchange}...</p>`;
+      status.textContent = "Scanning...";
+      table.style.display = "none";
+      tbody.innerHTML = "";
 
       try {
-        const res = await fetch('/scan', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ exchanges: [exchange], min_profit: minProfit })
+        const resp = await fetch("/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ exchanges: [exchange], min_profit: minProfit }),
         });
-        if (!res.ok) throw new Error("Scan request failed");
-        const data = await res.json();
 
-        if (!data.results || data.results.length === 0) {
-          resultsDiv.innerHTML = `<p class="text-center text-gray-400">No opportunities found.</p>`;
-          return;
+        if (!resp.ok) throw new Error("Network response was not ok");
+
+        const data = await resp.json();
+        if (data.results && data.results.length > 0) {
+          table.style.display = "table";
+          data.results.forEach((r, i) => {
+            const row = document.createElement("tr");
+
+            row.innerHTML = `
+              <td>${i + 1}</td>
+              <td>${r.triangle}</td>
+              <td>${r.pairs}</td>
+              <td>${r.profit_before_fees.toFixed(2)}</td>
+              <td>${r.trade_fees.toFixed(3)}</td>
+              <td class="${
+                r.profit_after_fees >= 0 ? "profit-positive" : "profit-negative"
+              }">${r.profit_after_fees.toFixed(2)}</td>
+            `;
+            tbody.appendChild(row);
+          });
+          status.textContent = "";
+        } else {
+          status.textContent = "No opportunities found.";
         }
-
-        // Build results table
-        let html = `
-          <div class="results-table">
-            <table class="table-auto w-full border border-gray-700 text-sm">
-              <thead class="bg-gray-900">
-                <tr>
-                  <th class="px-3 py-2 border border-gray-700">#</th>
-                  <th class="px-3 py-2 border border-gray-700">Triangle</th>
-                  <th class="px-3 py-2 border border-gray-700">Pairs</th>
-                  <th class="px-3 py-2 border border-gray-700">Profit Before %</th>
-                  <th class="px-3 py-2 border border-gray-700">Fees %</th>
-                  <th class="px-3 py-2 border border-gray-700">Profit After %</th>
-                </tr>
-              </thead>
-              <tbody>
-        `;
-
-        data.results.forEach((r, i) => {
-          const profitClass = r.profit_after_fees >= 0 ? "profit-positive" : "profit-negative";
-          html += `
-            <tr class="hover:bg-gray-800">
-              <td class="px-3 py-2 border border-gray-700 text-center">${i + 1}</td>
-              <td class="px-3 py-2 border border-gray-700">${r.triangle}</td>
-              <td class="px-3 py-2 border border-gray-700">${r.pairs}</td>
-              <td class="px-3 py-2 border border-gray-700">${r.profit_before_fees.toFixed(2)}</td>
-              <td class="px-3 py-2 border border-gray-700">${r.trade_fees.toFixed(3)}</td>
-              <td class="px-3 py-2 border border-gray-700 ${profitClass}">${r.profit_after_fees.toFixed(2)}</td>
-            </tr>
-          `;
-        });
-
-        html += `</tbody></table></div>`;
-        resultsDiv.innerHTML = html;
-
-      } catch (err) {
-        resultsDiv.innerHTML = `<p class="text-red-500 text-center">Error scanning exchanges. Check server logs.</p>`;
+      } catch (e) {
+        console.error(e);
+        status.textContent = "Error scanning exchanges. Check server logs.";
       }
     }
   </script>

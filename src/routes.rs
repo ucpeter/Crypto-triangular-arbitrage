@@ -6,12 +6,12 @@ use axum::{
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{info, error};
 
-use crate::models::{AppState, ScanRequest, TriangularResult};
-use crate::exchanges::fetch_many;
+use crate::models::{AppState, ScanRequest, ScanResponse, TriangularResult};
+use crate::exchanges::fetch_exchange_data;
 use crate::logic::scan_triangles;
 
+/// Root endpoint (simple status check)
 pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::OK,
@@ -22,35 +22,40 @@ pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
+/// Main scan endpoint
 pub async fn scan_handler(
     State(state): State<Arc<Mutex<AppState>>>,
     Json(payload): Json<ScanRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    info!("received /scan request payload={:?}", payload);
+    let mut all_pairs = Vec::new();
 
-    let mut shared_state = state.lock().await;
-
-    // fetch selected exchanges
-    let data = fetch_many(payload.exchanges.clone()).await;
-    let mut results: Vec<TriangularResult> = Vec::new();
-
-    for (ex, pairs) in data {
-        info!("fetched pairs exchange={} count={}", ex, pairs.len());
-
-        let mut r = scan_triangles(&pairs, payload.min_profit, 0.1); // 0.1% per trade
-        results.append(&mut r);
+    // Fetch spot pairs from all selected exchanges
+    for ex in &payload.exchanges {
+        match fetch_exchange_data(ex).await {
+            Ok(mut pairs) => {
+                tracing::info!("✅ {} returned {} spot pairs", ex, pairs.len());
+                all_pairs.append(&mut pairs);
+            }
+            Err(e) => {
+                tracing::error!("❌ Error fetching {}: {:?}", ex, e);
+            }
+        }
     }
 
-    info!("scan completed found={}", results.len());
+    // Run arbitrage scan
+    let results: Vec<TriangularResult> =
+        scan_triangles(&all_pairs, payload.min_profit, 0.10);
 
+    // Save results to state
+    let mut shared_state = state.lock().await;
     shared_state.last_results = Some(results.clone());
 
     (
         StatusCode::OK,
-        Json(json!({
-            "status": "success",
-            "count": results.len(),
-            "results": results
+        Json(json!(ScanResponse {
+            status: "success".to_string(),
+            count: results.len(),
+            results,
         })),
     )
-    }
+}

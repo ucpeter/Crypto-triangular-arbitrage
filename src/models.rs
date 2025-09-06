@@ -1,13 +1,28 @@
 use serde::{Deserialize, Serialize};
 
-/// Shared application state (stores last scan results)
+/// Shared app state (you can extend this if needed)
 #[derive(Default)]
 pub struct AppState {
     pub last_results: Option<Vec<TriangularResult>>,
 }
 
-/// Single pair price (spot)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Input payload when user hits "Scan"
+#[derive(Debug, Deserialize)]
+pub struct ScanRequest {
+    pub exchanges: Vec<String>,
+    pub min_profit: f64,
+}
+
+/// Output payload for UI
+#[derive(Debug, Serialize)]
+pub struct ScanResponse {
+    pub status: String,
+    pub count: usize,
+    pub results: Vec<TriangularResult>,
+}
+
+/// Individual spot trading pair price
+#[derive(Debug, Clone)]
 pub struct PairPrice {
     pub base: String,
     pub quote: String,
@@ -15,19 +30,17 @@ pub struct PairPrice {
     pub is_spot: bool,
 }
 
-/// Triangular result passed to UI
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Single triangular arbitrage opportunity
+#[derive(Debug, Clone, Serialize)]
 pub struct TriangularResult {
-    pub triangle: String,           // e.g. "USDT → BTC → ETH → USDT"
-    pub pairs: String,              // e.g. "USDT/BTC | BTC/ETH | ETH/USDT"
+    /// Triangle path like `BTC → ETH → USDT → BTC`
+    pub triangle: String,
+    /// The actual tradable pairs in that path
+    pub pairs: String,
+    /// Profit margin before fees
     pub profit_before_fees: f64,
+    /// Total trade fees considered
     pub trade_fees: f64,
+    /// Net profit margin after fees
     pub profit_after_fees: f64,
-}
-
-/// Request body from UI
-#[derive(Debug, Clone, Deserialize)]
-pub struct ScanRequest {
-    pub exchanges: Vec<String>,
-    pub min_profit: f64,
     }

@@ -86,6 +86,7 @@ pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, Box<d
                 }
             }
         }
+}
 
 // ---------------- Bybit ----------------
 "bybit" => {

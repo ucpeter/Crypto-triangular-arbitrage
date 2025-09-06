@@ -1,243 +1,117 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Triangular Arbitrage Scanner</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
   <style>
-    
+    /* Scanner control responsiveness */
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
     }
- 
+    @media (min-width: 768px) {
+      .controls {
+        flex-direction: row;
+        align-items: center;
+      }
+    }
+    /* Profit colors */
+    .profit-positive { color: #10b981; font-weight: 600; } /* green */
+    .profit-negative { color: #ef4444; font-weight: 600; } /* red */
+    th { color: #2563eb; } /* blue headers */
   </style>
 </head>
-<body>
-  <header>
-    <div class="title-box">Triangular Arbitrage Scanner</div>
-  </header>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+  <div class="max-w-5xl mx-auto p-4">
+    <!-- Title -->
+    <h1 class="text-2xl font-bold mb-4">
+      <span class="bg-blue-600 text-white px-2 py-1 rounded">Triangular Arbitrage Scanner</span>
+    </h1>
 
-  <div class="container">
-    <div class="card">
-      <div class="muted" style="margin-bottom:10px;">Scanner Controls</div>
-      <div class="controls">
-        <div>
-          <label for="exchange">Exchange:</label>
-          <select id="exchange">
-            <option value="binance">Binance</option>
-            <option value="kucoin">KuCoin</option>
-            <option value="bybit">Bybit</option>
-            <option value="gate">Gate.io</option>
-            <option value="kraken">Kraken</option>
-          </select>
-        </div>
-        <style>
-    :root{
-      --bg:#121212;
-      --card:#1e1e1e;
-      --muted:#9ca3af;
-      --accent:#1e88e5; /* blue */
-      --text:#e5e7eb;
-    }
-    body{
-      margin:0;
-      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-      background: var(--bg);
-      color: var(--text);
-    }
-    header{
-      display:flex;
-      justify-content:center;
-      padding:36px 16px 10px 16px;
-    }
-    .title-box{
-      background: var(--accent);
-      color: #fff;
-      padding: 10px 18px;
-      border-radius: 8px;
-      font-weight:700;
-      font-size:20px;
-      box-shadow: 0 6px 18px rgba(30,136,229,0.12);
-    }
-    .container{
-      max-width: 920px;
-      margin: 18px auto;
-      padding: 0 16px 40px 16px;
-    }
-    .card{
-      background: var(--card);
-      border-radius:12px;
-      padding:18px;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.25);
-      margin-bottom: 18px;
-    }
-    label {
-      display:block;
-      color:var(--muted);
-      font-size:16px;
-      margin-bottom:6px;
-      font-weight:600;
-    }
-    select, input[type="number"]{
-      width:100%;
-      padding:12px 14px;
-      border-radius:8px;
-      border:1px solid #374151;
-      font-size:16px;
-      background:#111;
-      color: var(--text);
-    }
-    .controls{
-      display:flex;
-      flex-direction:column;
-      gap:14px;
-    }
-    button{
-      background: var(--accent);
-      color: #fff;
-      border:none;
-      padding:10px 16px;
-      border-radius:8px;
-      font-weight:700;
-      font-size:16px;
-      cursor:pointer;
-      width:110px;
-    }
-    .row{
-      display:flex;
-      gap:12px;
-      align-items:center;
-      flex-wrap:wrap;
-    }
-    .status{
-      margin-top:6px;
-      font-weight:700;
-      color:var(--text);
-    }
-    /* results */
-    .results { display:none; }
-    .results.visible { display:block; }
-    .table-wrap {
-      overflow:auto;
-      border-radius:8px;
-      border:1px solid #374151;
-      max-height: 520px;
-    }
-    table{
-      width:100%;
-      border-collapse:collapse;
-      min-width:900px;
-      font-size:16px; /* match label size */
-      color: var(--text);
-    }
-    th, td {
-      padding:12px 10px;
-      border-bottom:1px solid #2d2d2d;
-      text-align:center;
-    }
-    th {
-      background: var(--accent);
-      font-weight:700;
-      color:#fff;
-      position:sticky;
-      top:0;
-    }
-    tr:nth-child(even) td { background:#1a1a1a; }
-    .muted { color:var(--muted); font-size:14px; font-weight:600;}
-        </style>
+    <!-- Controls -->
+    <div class="controls mb-6">
+      <select id="exchange" class="p-2 rounded bg-gray-800 border border-gray-700">
+        <option value="binance">Binance</option>
+        <option value="kucoin">KuCoin</option>
+        <option value="bybit">Bybit</option>
+        <option value="gateio">Gate.io</option>
+      </select>
 
-        <div>
-          <label for="minprofit">Min profit % (before fees):</label>
-          <input id="minprofit" type="number" step="0.1" value="0.3" />
-        </div>
+      <input type="number" step="0.1" id="minProfit" placeholder="Min Profit %"
+             class="p-2 rounded bg-gray-800 border border-gray-700 w-full md:w-40" value="0.3">
 
-        <div class="row">
-          <button id="scanBtn">Scan</button>
-          <div class="status" id="statusText"></div>
-        </div>
-      </div>
+      <button id="scanBtn" class="px-4 py-2 bg-blue-600 rounded hover:bg-blue-700">Scan</button>
     </div>
 
-    <div class="card results" id="resultsCard" aria-hidden="true">
-      <div class="muted" style="margin-bottom:8px;">Profitable Opportunities</div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Triangle</th>
-              <th>Pairs</th>
-              <th>Profit Before (%)</th>
-              <th>Fees (%)</th>
-              <th>Profit After (%)</th>
-            </tr>
-          </thead>
-          <tbody id="resultsBody"></tbody>
-        </table>
-      </div>
-    </div>
+    <!-- Results -->
+    <div id="results"></div>
   </div>
 
-<script>
-  const scanBtn = document.getElementById('scanBtn');
-  const statusText = document.getElementById('statusText');
-  const exchangeSelect = document.getElementById('exchange');
-  const minProfitInput = document.getElementById('minprofit');
-  const resultsBody = document.getElementById('resultsBody');
-  const resultsCard = document.getElementById('resultsCard');
+  <script>
+    const btn = document.getElementById("scanBtn");
+    const resultsDiv = document.getElementById("results");
 
-  // selecting exchange auto-applies (no OK needed) — select's value is used on Scan
-  scanBtn.addEventListener('click', async () => {
-    const exchange = exchangeSelect.value;
-    const minProfit = parseFloat(minProfitInput.value) || 0.0;
+    btn.addEventListener("click", async () => {
+      const exchange = document.getElementById("exchange").value;
+      const minProfit = parseFloat(document.getElementById("minProfit").value);
 
-    statusText.textContent = 'Scanning...';
-    scanBtn.disabled = true;
-    resultsCard.classList.remove('visible');
-    resultsBody.innerHTML = '';
+      resultsDiv.innerHTML = `<p class="text-gray-400">Scanning ${exchange}...</p>`;
 
-    try {
-      const resp = await fetch('/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ exchanges: [exchange], min_profit: minProfit })
-      });
-
-      if (!resp.ok) {
-        const err = await resp.json().catch(()=>null);
-        console.error('scan error', resp.status, err);
-        alert('Server error during scan. Check logs.');
-        statusText.textContent = 'Error';
-        scanBtn.disabled = false;
-        return;
-      }
-
-      const data = await resp.json();
-      const results = data.results || [];
-      if (results.length === 0) {
-        resultsBody.innerHTML = '<tr><td colspan="6">No opportunities found</td></tr>';
-      } else {
-        let html = '';
-        results.forEach((r, i) => {
-          html += `<tr>
-            <td>${i+1}</td>
-            <td>${r.triangle}</td>
-            <td>${r.pairs}</td>
-            <td>${Number(r.profit_before).toFixed(3)}</td>
-            <td>${Number(r.fees).toFixed(3)}</td>
-            <td>${Number(r.profit_after).toFixed(3)}</td>
-          </tr>`;
+      try {
+        const res = await fetch("/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ exchanges: [exchange], min_profit: minProfit })
         });
-        resultsBody.innerHTML = html;
+        const data = await res.json();
+
+        if (!data.results || data.results.length === 0) {
+          resultsDiv.innerHTML = `<p class="text-red-400">No opportunities found</p>`;
+          return;
+        }
+
+        let html = `
+          <h2 class="text-xl font-semibold mb-2">Profitable Triangles on ${exchange}</h2>
+          <div class="overflow-x-auto">
+          <table class="table-auto w-full border border-gray-700">
+            <thead>
+              <tr class="bg-gray-800">
+                <th class="px-2 py-1 text-left">#</th>
+                <th class="px-2 py-1 text-left">Triangle</th>
+                <th class="px-2 py-1 text-left">Pairs</th>
+                <th class="px-2 py-1 text-left">Profit Before %</th>
+                <th class="px-2 py-1 text-left">Fees %</th>
+                <th class="px-2 py-1 text-left">Profit After %</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        data.results.forEach((r, i) => {
+          const profitClass = r.profit_after_fees >= 0 ? "profit-positive" : "profit-negative";
+          html += `
+            <tr class="border-t border-gray-700">
+              <td class="px-2 py-1">${i+1}</td>
+              <td class="px-2 py-1">${r.triangle}</td>
+              <td class="px-2 py-1">${r.pairs}</td>
+              <td class="px-2 py-1">${r.profit_before_fees.toFixed(2)}</td>
+              <td class="px-2 py-1">${r.trade_fees.toFixed(2)}</td>
+              <td class="px-2 py-1 ${profitClass}">${r.profit_after_fees.toFixed(2)}</td>
+            </tr>
+          `;
+        });
+
+        html += `</tbody></table></div>
+          <p class="text-gray-400 mt-2">Taker fee used: 0.100%</p>`;
+
+        resultsDiv.innerHTML = html;
+      } catch (err) {
+        resultsDiv.innerHTML = `<p class="text-red-400">Error scanning: ${err}</p>`;
       }
-      resultsCard.classList.add('visible');
-      statusText.textContent = `Done — ${results.length} results`;
-    } catch (e) {
-      console.error('fetch failed', e);
-      alert('Error scanning exchanges. Check server logs.');
-      statusText.textContent = 'Error';
-    } finally {
-      scanBtn.disabled = false;
-    }
-  });
-</script>
+    });
+  </script>
 </body>
 </html>

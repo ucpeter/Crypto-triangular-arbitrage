@@ -136,7 +136,7 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
     Ok(out)
 }
 
-/// ----------------- GATE.IO -----------------
+// ----------------- GATE.IO -----------------
 pub async fn fetch_gateio(client: &Client) -> Result<Vec<PairPrice>, String> {
     info!("fetching gateio");
 
@@ -187,4 +187,16 @@ pub async fn fetch_gateio(client: &Client) -> Result<Vec<PairPrice>, String> {
 
     info!("gateio returned {} spot pairs", out.len());
     Ok(out)
-                                    }
+} // ✅ this closes fetch_gateio properly
+
+// ----------------- FETCH DISPATCH -----------------
+pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, Box<dyn std::error::Error>> {
+    let client = Client::new();
+    match exchange {
+        "binance" => Ok(fetch_binance(&client).await?),
+        "bybit"   => Ok(fetch_bybit(&client).await?),
+        "kucoin"  => Ok(fetch_kucoin(&client).await?),
+        "gateio"  => Ok(fetch_gateio(&client).await?),
+        _ => Err(format!("unsupported exchange: {}", exchange).into()),
+    }
+} // ✅ this closes fetch_exchange_data properly

@@ -2,12 +2,19 @@ use crate::models::{PairPrice, TriangularResult};
 use crate::utils::round2;
 use std::collections::{HashMap, HashSet};
 
-/// Scan triangles using spot pairs only
-pub fn scan_triangles(prices: &[PairPrice], min_profit: f64, fee_per_leg: f64) -> Vec<TriangularResult> {
+/// Scan triangles using given pair prices (spot only).
+/// - prices: slice of PairPrice
+/// - min_profit: minimum % BEFORE fees to include (e.g., 0.3)
+/// - fee_per_leg: percent per leg (e.g., 0.1 for 0.1%)
+pub fn scan_triangles(
+    prices: &[PairPrice],
+    min_profit: f64,
+    fee_per_leg: f64,
+) -> Vec<TriangularResult> {
     let mut rate: HashMap<(String, String), f64> = HashMap::new();
     let mut neighbors: HashMap<String, HashSet<String>> = HashMap::new();
 
-    // ✅ Build graph strictly with spot pairs only
+    // Build graph strictly with spot pairs only
     for p in prices {
         if !p.is_spot || !p.price.is_finite() || p.price <= 0.0 {
             continue; // skip non-spot or invalid price
@@ -63,11 +70,7 @@ pub fn scan_triangles(prices: &[PairPrice], min_profit: f64, fee_per_leg: f64) -
                     let gross = r1 * r2 * r3;
                     let profit_before = (gross - 1.0) * 100.0;
 
-                    // sanity checks
-                    if !profit_before.is_finite() || profit_before <= 0.0 {
-                        continue;
-                    }
-                    if profit_before < min_profit {
+                    if !profit_before.is_finite() || profit_before < min_profit {
                         continue;
                     }
 
@@ -87,8 +90,8 @@ pub fn scan_triangles(prices: &[PairPrice], min_profit: f64, fee_per_leg: f64) -
                     }
 
                     out.push(TriangularResult {
-                        triangle: format!("{}/{} -> {}/{} -> {}/{}", a, b, b, c, c, a),
-                        pairs: format!("{}|{}|{}", format!("{}/{}", a, b), format!("{}/{}", b, c), format!("{}/{}", c, a)),
+                        triangle: format!("{} → {} → {} → {}", a, b, c, a),
+                        pairs: format!("{}/{} | {}/{} | {}/{}", a, b, b, c, c, a),
                         profit_before_fees: round2(profit_before),
                         trade_fees: round2(total_fee_percent),
                         profit_after_fees: round2(profit_after),
@@ -105,4 +108,4 @@ pub fn scan_triangles(prices: &[PairPrice], min_profit: f64, fee_per_leg: f64) -
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     out
-                    }
+                                                }

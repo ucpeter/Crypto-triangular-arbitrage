@@ -1,76 +1,56 @@
 use axum::{
-    extract::{State, Json},
+    extract::State,
+    response::Json,
     http::StatusCode,
-    response::IntoResponse,
 };
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::{info, error};
 
-use crate::models::{AppState, ScanRequest, TriangularResult, PairPrice};
-use crate::exchanges;
-use crate::logic;
+use crate::models::{AppState, ScanRequest, TriangularResult};
+use crate::exchanges::fetch_many;
+use crate::logic::scan_triangles;
 
-pub async fn ui_handler() -> impl IntoResponse {
+pub async fn ui_handler() -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::OK,
         Json(json!({
             "message": "Triangular Arbitrage Scanner API is running",
-            "usage": "POST /scan with { exchanges: [\"binance\",\"kucoin\"], min_profit: 0.3 }"
+            "usage": "POST /scan with { exchanges: [], min_profit: number }"
         })),
     )
 }
 
-/// Scan handler returns Result so we can use `?` nicely
 pub async fn scan_handler(
     State(state): State<Arc<Mutex<AppState>>>,
     Json(payload): Json<ScanRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    tracing::info!(?payload, "received /scan request");
+) -> (StatusCode, Json<serde_json::Value>) {
+    info!("received /scan request payload={:?}", payload);
 
-    if payload.exchanges.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({"error": "no exchanges selected"}))));
+    let mut shared_state = state.lock().await;
+
+    // fetch selected exchanges
+    let data = fetch_many(payload.exchanges.clone()).await;
+    let mut results: Vec<TriangularResult> = Vec::new();
+
+    for (ex, pairs) in data {
+        info!("fetched pairs exchange={} count={}", ex, pairs.len());
+
+        let mut r = scan_triangles(&pairs, payload.min_profit, 0.1); // 0.1% per trade
+        results.append(&mut r);
     }
 
-    // 1) fetch pairs for requested exchanges concurrently
-    let fetches = exchanges::fetch_many(&payload.exchanges).await;
+    info!("scan completed found={}", results.len());
 
-    // merge pairs
-    let mut all_pairs: Vec<PairPrice> = Vec::new();
-    for (name, pairs) in fetches.into_iter() {
-        tracing::info!(exchange = %name, count = pairs.len(), "fetched pairs");
-        all_pairs.extend(pairs);
+    shared_state.last_results = Some(results.clone());
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "success",
+            "count": results.len(),
+            "results": results
+        })),
+    )
     }
-
-    // 2) compute triangles on blocking thread
-    let min_profit = payload.min_profit;
-    let scan_result: Vec<TriangularResult> = tokio::task::spawn_blocking(move || {
-        logic::scan_triangles(&all_pairs, min_profit, 0.1)
-    })
-    .await
-    .map_err(|e| {
-        tracing::error!("scan task failed to join: {:?}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "scan task failed"})))
-    })?;
-
-    tracing::info!(found = scan_result.len(), "scan completed");
-
-    // 3) store a copy in shared state
-    {
-        let mut s = state.lock().await;
-        s.last_results = Some(scan_result.clone());
-    }
-
-    // 4) prepare JSON result
-    let results_json: Vec<_> = scan_result.into_iter().map(|r| {
-        json!({
-            "triangle": r.triangle,
-            "pairs": r.pairs,
-            "profit_before": r.profit_before_fees,
-            "fees": r.trade_fees,
-            "profit_after": r.profit_after_fees,
-        })
-    }).collect();
-
-    Ok((StatusCode::OK, Json(json!({"status":"success","count": results_json.len(), "results": results_json}))))
-}

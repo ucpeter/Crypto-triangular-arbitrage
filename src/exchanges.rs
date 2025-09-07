@@ -98,64 +98,56 @@ async fn fetch_kucoin(client: &Client) -> Result<Vec<PairPrice>, String> {
     Ok(out)
 }
 
-    // ----------------- BYBIT -----------------
+    /// ----------------- BYBIT -----------------
 pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
     info!("fetching bybit");
 
-    // Step 1: fetch instruments meta (only keep status == "Trading")
+    // Step 1: Get active spot instruments
     let info_url = "https://api.bybit.com/v5/market/instruments-info?category=spot";
-    let info: serde_json::Value = client
-        .get(info_url)
-        .send()
-        .await
-        .map_err(|e| format!("bybit info http error: {}", e))?
-        .json()
-        .await
-        .map_err(|e| format!("bybit info decode error: {}", e))?;
+    let info: Value = client.get(info_url).send().await
+        .map_err(|e| format!("bybit instruments error: {}", e))?
+        .json().await
+        .map_err(|e| format!("bybit decode instruments error: {}", e))?;
 
-    let mut active_map: std::collections::HashMap<String, (String, String)> =
-        std::collections::HashMap::new();
-    if let Some(list) = info["result"]["list"].as_array() {
-        for v in list {
-            if v["status"].as_str() == Some("Trading") {
-                if let (Some(sym), Some(base), Some(quote)) = (
-                    v.get("symbol").and_then(|s| s.as_str()),
-                    v.get("baseCoin").and_then(|s| s.as_str()),
-                    v.get("quoteCoin").and_then(|s| s.as_str()),
+    let mut symbol_map: HashMap<String, (String, String)> = HashMap::new();
+    if let Some(arr) = info["result"]["list"].as_array() {
+        for obj in arr {
+            if obj["status"] == "Trading" {
+                if let (Some(base), Some(quote), Some(symbol)) = (
+                    obj.get("baseCoin"),
+                    obj.get("quoteCoin"),
+                    obj.get("symbol"),
                 ) {
-                    active_map.insert(
-                        sym.to_uppercase(),
-                        (base.to_uppercase(), quote.to_uppercase()),
-                    );
+                    let quote = quote.as_str().unwrap().to_uppercase();
+                    // ✅ keep only real quote markets
+                    if ["USDT", "USDC", "BTC", "ETH"].contains(&quote.as_str()) {
+                        symbol_map.insert(
+                            symbol.as_str().unwrap().to_uppercase(),
+                            (
+                                base.as_str().unwrap().to_uppercase(),
+                                quote,
+                            ),
+                        );
+                    }
                 }
             }
         }
     }
-    info!("Bybit metadata loaded {} trading spot symbols", active_map.len());
 
-    // Step 2: fetch tickers and only keep those in active_map
-    let tickers_url = "https://api.bybit.com/v5/market/tickers?category=spot";
-    let tickers: serde_json::Value = client
-        .get(tickers_url)
-        .send()
-        .await
-        .map_err(|e| format!("bybit tickers http error: {}", e))?
-        .json()
-        .await
-        .map_err(|e| format!("bybit tickers decode error: {}", e))?;
+    // Step 2: fetch live prices
+    let url = "https://api.bybit.com/v5/market/tickers?category=spot";
+    let resp: Value = client.get(url).send().await
+        .map_err(|e| format!("bybit tickers error: {}", e))?
+        .json().await
+        .map_err(|e| format!("bybit decode tickers error: {}", e))?;
 
-    let mut out: Vec<PairPrice> = Vec::new();
-    let mut kept = 0usize;
-    let mut skipped = 0usize;
-
-    if let Some(list) = tickers["result"]["list"].as_array() {
-        for v in list {
-            if let (Some(sym), Some(price_s)) =
-                (v.get("symbol").and_then(|s| s.as_str()), v.get("lastPrice").and_then(|p| p.as_str()))
-            {
-                let sym_u = sym.to_uppercase();
-                if let Some((base, quote)) = active_map.get(&sym_u) {
-                    if let Ok(price) = price_s.parse::<f64>() {
+    let mut out = Vec::new();
+    if let Some(arr) = resp["result"]["list"].as_array() {
+        for obj in arr {
+            if let (Some(symbol), Some(price_str)) = (obj.get("symbol"), obj.get("lastPrice")) {
+                let symbol = symbol.as_str().unwrap().to_uppercase();
+                if let Some((base, quote)) = symbol_map.get(&symbol) {
+                    if let Ok(price) = price_str.as_str().unwrap().parse::<f64>() {
                         if price > 0.0 {
                             out.push(PairPrice {
                                 base: base.clone(),
@@ -163,100 +155,75 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
                                 price,
                                 is_spot: true,
                             });
-                            kept += 1;
-                        } else {
-                            skipped += 1;
                         }
-                    } else {
-                        skipped += 1;
                     }
-                } else {
-                    // not active according to instruments-info
-                    skipped += 1;
                 }
             }
         }
     }
 
-    info!("Bybit kept {} pairs, skipped {}", kept, skipped);
+    info!("bybit returned {} filtered spot pairs", out.len());
     Ok(out)
 }
 
-
-// ----------------- GATE.IO -----------------
-pub async fn fetch_gateio(client: &Client) -> Result<Vec<PairPrice>, String> {
+/// ----------------- GATE.IO -----------------
+pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
     info!("fetching gateio");
 
-    // Step 1: fetch currency_pairs metadata (keep trade_status == "tradable")
-    let symbols_url = "https://api.gate.io/api/v4/spot/currency_pairs";
-    let symbols: Vec<serde_json::Value> = client
-        .get(symbols_url)
-        .send()
-        .await
-        .map_err(|e| format!("gateio symbols http error: {}", e))?
-        .json()
-        .await
-        .map_err(|e| format!("gateio symbols decode error: {}", e))?;
+    // Build client that skips SSL hostname verification
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
+        .build()
+        .map_err(|e| format!("gateio client build error: {}", e))?;
 
-    let mut tradable_map: std::collections::HashMap<String, (String, String)> =
-        std::collections::HashMap::new();
+    // Step 1: fetch tradable pairs
+    let symbols_url = "https://api.gate.io/api/v4/spot/currency_pairs";
+    let symbols_resp = client.get(symbols_url).send().await
+        .map_err(|e| format!("gateio symbols http error: {}", e))?;
+    let symbols: Vec<Value> = symbols_resp.json().await
+        .map_err(|e| format!("gateio decode symbols error: {}", e))?;
+
+    let mut tradable = HashSet::new();
     for s in symbols {
-        if s["trade_status"].as_str() == Some("tradable") {
-            if let (Some(id), Some(base), Some(quote)) = (
-                s.get("id").and_then(|x| x.as_str()),
-                s.get("base").and_then(|x| x.as_str()),
-                s.get("quote").and_then(|x| x.as_str()),
-            ) {
-                tradable_map.insert(id.to_uppercase(), (base.to_uppercase(), quote.to_uppercase()));
+        if s["trade_status"] == "tradable" {
+            if let Some(id) = s["id"].as_str() {
+                tradable.insert(id.to_uppercase());
             }
         }
     }
-    info!("Gate.io metadata loaded {} tradable pairs", tradable_map.len());
 
-    // Step 2: fetch tickers and only keep those in tradable_map
-    let tickers_url = "https://api.gate.io/api/v4/spot/tickers";
-    let tickers: Vec<serde_json::Value> = client
-        .get(tickers_url)
-        .send()
-        .await
-        .map_err(|e| format!("gateio tickers http error: {}", e))?
-        .json()
-        .await
-        .map_err(|e| format!("gateio tickers decode error: {}", e))?;
+    // Step 2: fetch tickers
+    let url = "https://api.gate.io/api/v4/spot/tickers";
+    let resp = client.get(url).send().await
+        .map_err(|e| format!("gateio tickers http error: {}", e))?;
+    let json: Vec<Value> = resp.json().await
+        .map_err(|e| format!("gateio decode tickers error: {}", e))?;
 
-    let mut out: Vec<PairPrice> = Vec::new();
-    let mut kept = 0usize;
-    let mut skipped = 0usize;
-
-    for t in tickers {
-        if let (Some(sym), Some(price_s)) = (t.get("currency_pair").and_then(|s| s.as_str()), t.get("last").and_then(|p| p.as_str())) {
-            let sym_u = sym.to_uppercase();
-            if let Some((base, quote)) = tradable_map.get(&sym_u) {
-                if let Ok(price) = price_s.parse::<f64>() {
-                    if price > 0.0 {
+    let mut out = Vec::new();
+    for v in json {
+        if let (Some(symbol), Some(last_str)) = (v["currency_pair"].as_str(), v["last"].as_str()) {
+            let symbol = symbol.to_uppercase();
+            if !tradable.contains(&symbol) { continue; }
+            if let Ok(price) = last_str.parse::<f64>() {
+                if price > 0.0 {
+                    let parts: Vec<&str> = symbol.split('_').collect();
+                    if parts.len() == 2 {
                         out.push(PairPrice {
-                            base: base.clone(),
-                            quote: quote.clone(),
+                            base: parts[0].to_string(),
+                            quote: parts[1].to_string(),
                             price,
                             is_spot: true,
                         });
-                        kept += 1;
-                    } else {
-                        skipped += 1;
                     }
-                } else {
-                    skipped += 1;
                 }
-            } else {
-                // ticker exists but not marked tradable in metadata
-                skipped += 1;
             }
         }
     }
 
-    info!("Gate.io kept {} pairs, skipped {}", kept, skipped);
+    info!("gateio returned {} spot pairs", out.len());
     Ok(out)
-                }
+                                } 
 /// ---------------- Dispatcher ----------------
 pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, String> {
     let client = Client::new();

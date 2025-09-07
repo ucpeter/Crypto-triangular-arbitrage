@@ -170,10 +170,9 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
 pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
     info!("fetching gateio");
 
-    // Build client that skips SSL hostname verification
+    // Build client that skips SSL certificate validation
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
-        .danger_accept_invalid_hostnames(true)
         .build()
         .map_err(|e| format!("gateio client build error: {}", e))?;
 
@@ -223,7 +222,7 @@ pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
 
     info!("gateio returned {} spot pairs", out.len());
     Ok(out)
-                                } 
+    }
 /// ---------------- Dispatcher ----------------
 pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, String> {
     let client = Client::new();

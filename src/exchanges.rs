@@ -98,34 +98,44 @@ async fn fetch_kucoin(client: &Client) -> Result<Vec<PairPrice>, String> {
     Ok(out)
 }
 
-/// ---------------- Bybit ----------------
-async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
+// ---------------- Bybit ----------------
+"bybit" => {
+    // Step 1: Fetch metadata for spot instruments
     let info_url = "https://api.bybit.com/v5/market/instruments-info?category=spot";
-    let info: Value = client.get(info_url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+    let info: Value = client.get(info_url).send().await?.json().await?;
     let mut symbol_map: HashMap<String, (String, String)> = HashMap::new();
 
     if let Some(arr) = info["result"]["list"].as_array() {
         for obj in arr {
             if obj["status"] == "Trading" {
                 if let (Some(base), Some(quote), Some(symbol)) =
-                    (obj["baseCoin"].as_str(), obj["quoteCoin"].as_str(), obj["symbol"].as_str())
+                    (obj.get("baseCoin"), obj.get("quoteCoin"), obj.get("symbol"))
                 {
-                    symbol_map.insert(symbol.to_uppercase(), (base.to_uppercase(), quote.to_uppercase()));
+                    symbol_map.insert(
+                        symbol.as_str().unwrap().to_uppercase(),
+                        (
+                            base.as_str().unwrap().to_uppercase(),
+                            quote.as_str().unwrap().to_uppercase(),
+                        ),
+                    );
                 }
             }
         }
     }
+    info!("Bybit metadata loaded {} trading spot pairs", symbol_map.len());
 
-    let url = "https://api.bybit.com/v5/market/tickers?category=spot";
-    let resp: Value = client.get(url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+    // Step 2: Fetch tickers
+    let price_url = "https://api.bybit.com/v5/market/tickers?category=spot";
+    let resp: Value = client.get(price_url).send().await?.json().await?;
+    let mut kept = 0;
+    let mut skipped = 0;
 
-    let mut out = Vec::new();
     if let Some(arr) = resp["result"]["list"].as_array() {
         for obj in arr {
-            if let (Some(symbol), Some(price_str)) = (obj["symbol"].as_str(), obj["lastPrice"].as_str()) {
-                let symbol = symbol.to_uppercase();
+            if let (Some(symbol), Some(price_str)) = (obj.get("symbol"), obj.get("lastPrice")) {
+                let symbol = symbol.as_str().unwrap().to_uppercase();
                 if let Some((base, quote)) = symbol_map.get(&symbol) {
-                    if let Ok(price) = price_str.parse::<f64>() {
+                    if let Ok(price) = price_str.as_str().unwrap().parse::<f64>() {
                         if price > 0.0 {
                             out.push(PairPrice {
                                 base: base.clone(),
@@ -133,58 +143,74 @@ async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
                                 price,
                                 is_spot: true,
                             });
+                            kept += 1;
                         }
                     }
+                } else {
+                    skipped += 1;
                 }
             }
         }
     }
-
-    info!("bybit returned {} pairs", out.len());
-    Ok(out)
+    info!("Bybit kept {} pairs, skipped {}", kept, skipped);
 }
 
-/// ---------------- Gate.io ----------------
-async fn fetch_gateio(client: &Client) -> Result<Vec<PairPrice>, String> {
-    let sym_url = "https://api.gate.io/api/v4/spot/currency_pairs";
-    let symbols: Vec<Value> = client.get(sym_url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+// ---------------- Gate.io ----------------
+"gate" | "gateio" => {
+    // Step 1: Get metadata for tradable pairs
+    let symbols_url = "https://api.gate.io/api/v4/spot/currency_pairs";
+    let symbols_resp = client.get(symbols_url).send().await?.json::<Vec<Value>>().await?;
+    let mut tradable: HashMap<String, (String, String)> = HashMap::new();
 
-    let mut tradable: HashSet<String> = HashSet::new();
-    for s in symbols {
-        if s["trade_status"] == "tradable" {
-            if let Some(sym) = s["id"].as_str() {
-                tradable.insert(sym.to_uppercase());
+    for obj in symbols_resp {
+        if obj["trade_status"] == "tradable" {
+            if let (Some(id), Some(base), Some(quote)) =
+                (obj.get("id"), obj.get("base"), obj.get("quote"))
+            {
+                tradable.insert(
+                    id.as_str().unwrap().to_uppercase(),
+                    (
+                        base.as_str().unwrap().to_uppercase(),
+                        quote.as_str().unwrap().to_uppercase(),
+                    ),
+                );
             }
         }
     }
+    info!("Gate.io metadata loaded {} tradable pairs", tradable.len());
 
-    let tickers_url = "https://api.gate.io/api/v4/spot/tickers";
-    let tickers: Vec<Value> = client.get(tickers_url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+    // Step 2: Fetch tickers
+    let url = "https://api.gate.io/api/v4/spot/tickers";
+    let resp: Value = client.get(url).send().await?.json().await?;
+    let mut kept = 0;
+    let mut skipped = 0;
 
-    let mut out = Vec::new();
-    for t in tickers {
-        if let (Some(symbol), Some(price_str)) = (t["currency_pair"].as_str(), t["last"].as_str()) {
-            let symbol = symbol.to_uppercase();
-            if !tradable.contains(&symbol) { continue; }
-            let parts: Vec<&str> = symbol.split('_').collect();
-            if parts.len() == 2 {
-                if let Ok(price) = price_str.parse::<f64>() {
-                    if price > 0.0 {
-                        out.push(PairPrice {
-                            base: parts[0].to_string(),
-                            quote: parts[1].to_string(),
-                            price,
-                            is_spot: true,
-                        });
+    if let Some(arr) = resp.as_array() {
+        for obj in arr {
+            if let (Some(symbol), Some(price_str)) =
+                (obj.get("currency_pair"), obj.get("last"))
+            {
+                let symbol = symbol.as_str().unwrap().to_uppercase();
+                if let Some((base, quote)) = tradable.get(&symbol) {
+                    if let Ok(price) = price_str.as_str().unwrap().parse::<f64>() {
+                        if price > 0.0 {
+                            out.push(PairPrice {
+                                base: base.clone(),
+                                quote: quote.clone(),
+                                price,
+                                is_spot: true,
+                            });
+                            kept += 1;
+                        }
                     }
+                } else {
+                    skipped += 1;
                 }
             }
         }
     }
-
-    info!("gateio returned {} pairs", out.len());
-    Ok(out)
-}
+    info!("Gate.io kept {} pairs, skipped {}", kept, skipped);
+                }
 
 /// ---------------- Dispatcher ----------------
 pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, String> {

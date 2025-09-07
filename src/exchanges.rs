@@ -170,14 +170,14 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
 pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
     info!("fetching gateio");
 
-    // Client that skips SSL cert validation
+    // Client that skips SSL cert validation (still useful)
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| format!("gateio client build error: {}", e))?;
 
     // Step 1: fetch tradable pairs metadata
-    let symbols_url = "https://api.gate.io/api/v4/spot/currency_pairs";
+    let symbols_url = "https://api.gateio.ws/api/v4/spot/currency_pairs";
     let symbols_resp = client.get(symbols_url).send().await
         .map_err(|e| format!("gateio symbols http error: {}", e))?;
 
@@ -197,7 +197,7 @@ pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
     }
 
     // Step 2: fetch tickers
-    let url = "https://api.gate.io/api/v4/spot/tickers";
+    let url = "https://api.gateio.ws/api/v4/spot/tickers";
     let resp = client.get(url).send().await
         .map_err(|e| format!("gateio tickers http error: {}", e))?;
 
@@ -230,7 +230,7 @@ pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
 
     info!("gateio returned {} spot pairs", out.len());
     Ok(out)
-            }
+}
 /// ---------------- Dispatcher ----------------
 pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, String> {
     let client = Client::new();

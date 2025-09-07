@@ -170,18 +170,22 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
 pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
     info!("fetching gateio");
 
-    // Build client that skips SSL certificate validation
+    // Client that skips SSL cert validation
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| format!("gateio client build error: {}", e))?;
 
-    // Step 1: fetch tradable pairs
+    // Step 1: fetch tradable pairs metadata
     let symbols_url = "https://api.gate.io/api/v4/spot/currency_pairs";
     let symbols_resp = client.get(symbols_url).send().await
         .map_err(|e| format!("gateio symbols http error: {}", e))?;
-    let symbols: Vec<Value> = symbols_resp.json().await
-        .map_err(|e| format!("gateio decode symbols error: {}", e))?;
+
+    let raw_symbols = symbols_resp.text().await
+        .map_err(|e| format!("gateio symbols read error: {}", e))?;
+
+    let symbols: Vec<Value> = serde_json::from_str(&raw_symbols)
+        .map_err(|e| format!("gateio decode symbols error: {}. First 100 chars: {}", e, &raw_symbols.chars().take(100).collect::<String>()))?;
 
     let mut tradable = HashSet::new();
     for s in symbols {
@@ -196,8 +200,12 @@ pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
     let url = "https://api.gate.io/api/v4/spot/tickers";
     let resp = client.get(url).send().await
         .map_err(|e| format!("gateio tickers http error: {}", e))?;
-    let json: Vec<Value> = resp.json().await
-        .map_err(|e| format!("gateio decode tickers error: {}", e))?;
+
+    let raw_tickers = resp.text().await
+        .map_err(|e| format!("gateio tickers read error: {}", e))?;
+
+    let json: Vec<Value> = serde_json::from_str(&raw_tickers)
+        .map_err(|e| format!("gateio decode tickers error: {}. First 100 chars: {}", e, &raw_tickers.chars().take(100).collect::<String>()))?;
 
     let mut out = Vec::new();
     for v in json {
@@ -222,7 +230,7 @@ pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
 
     info!("gateio returned {} spot pairs", out.len());
     Ok(out)
-    }
+            }
 /// ---------------- Dispatcher ----------------
 pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, String> {
     let client = Client::new();

@@ -28,8 +28,8 @@ pub struct PairPrice {
     pub quote: String,
     pub price: f64,
     pub is_spot: bool,
-    /// Reported 24h volume (quote or base, normalized to quote for consistency)
-    pub volume: f64,
+    /// reported liquidity (e.g., quote volume)
+    pub liquidity: f64,
 }
 
 /// Single triangular arbitrage opportunity
@@ -45,12 +45,8 @@ pub struct TriangularResult {
     pub trade_fees: f64,
     /// Net profit margin after fees
     pub profit_after_fees: f64,
-    /// Liquidity for leg 1
-    pub liquidity_leg1: f64,
-    /// Liquidity for leg 2
-    pub liquidity_leg2: f64,
-    /// Liquidity for leg 3
-    pub liquidity_leg3: f64,
-    /// Minimum liquidity across the three legs
+    /// Liquidity for each leg
+    pub leg_liquidities: [f64; 3],
+    /// Minimum liquidity across all legs
     pub min_liquidity: f64,
-}
+    }

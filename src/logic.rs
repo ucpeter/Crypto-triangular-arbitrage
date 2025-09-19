@@ -11,8 +11,7 @@ pub fn scan_triangles(
     min_profit: f64,
     fee_per_leg: f64,
 ) -> Vec<TriangularResult> {
-    let mut rate: HashMap<(String, String), f64> = HashMap::new();
-    let mut volume: HashMap<(String, String), f64> = HashMap::new();
+    let mut rate: HashMap<(String, String), (f64, f64)> = HashMap::new(); // (price, liquidity)
     let mut neighbors: HashMap<String, HashSet<String>> = HashMap::new();
 
     // Build graph strictly with spot pairs only
@@ -25,13 +24,11 @@ pub fn scan_triangles(
         let b = p.quote.to_uppercase();
 
         // direct
-        rate.insert((a.clone(), b.clone()), p.price);
-        volume.insert((a.clone(), b.clone()), p.volume);
+        rate.insert((a.clone(), b.clone()), (p.price, p.liquidity));
         neighbors.entry(a.clone()).or_default().insert(b.clone());
 
-        // inverse
-        rate.insert((b.clone(), a.clone()), 1.0 / p.price);
-        volume.insert((b.clone(), a.clone()), p.volume);
+        // inverse — liquidity approximated the same (simplified)
+        rate.insert((b.clone(), a.clone()), (1.0 / p.price, p.liquidity));
         neighbors.entry(b.clone()).or_default().insert(a.clone());
     }
 
@@ -55,24 +52,19 @@ pub fn scan_triangles(
                         continue;
                     }
 
-                    // lookup rates
-                    let r1 = match rate.get(&(a.clone(), b.clone())) {
+                    // lookup rates + liquidity
+                    let (r1, l1) = match rate.get(&(a.clone(), b.clone())) {
                         Some(v) => *v,
                         None => continue,
                     };
-                    let r2 = match rate.get(&(b.clone(), c.clone())) {
+                    let (r2, l2) = match rate.get(&(b.clone(), c.clone())) {
                         Some(v) => *v,
                         None => continue,
                     };
-                    let r3 = match rate.get(&(c.clone(), a.clone())) {
+                    let (r3, l3) = match rate.get(&(c.clone(), a.clone())) {
                         Some(v) => *v,
                         None => continue,
                     };
-
-                    // lookup liquidity
-                    let liq1 = *volume.get(&(a.clone(), b.clone())).unwrap_or(&0.0);
-                    let liq2 = *volume.get(&(b.clone(), c.clone())).unwrap_or(&0.0);
-                    let liq3 = *volume.get(&(c.clone(), a.clone())).unwrap_or(&0.0);
 
                     // gross cycle multiplier
                     let gross = r1 * r2 * r3;
@@ -97,16 +89,18 @@ pub fn scan_triangles(
                         continue;
                     }
 
+                    // per-leg liquidity + bottleneck
+                    let leg_liqs = [l1, l2, l3];
+                    let min_liq = leg_liqs.iter().cloned().fold(f64::INFINITY, f64::min);
+
                     out.push(TriangularResult {
                         triangle: format!("{} → {} → {} → {}", a, b, c, a),
                         pairs: format!("{}/{} | {}/{} | {}/{}", a, b, b, c, c, a),
                         profit_before_fees: round2(profit_before),
                         trade_fees: round2(total_fee_percent),
                         profit_after_fees: round2(profit_after),
-                        liquidity_leg1: round2(liq1),
-                        liquidity_leg2: round2(liq2),
-                        liquidity_leg3: round2(liq3),
-                        min_liquidity: round2(liq1.min(liq2).min(liq3)),
+                        leg_liquidities: leg_liqs,
+                        min_liquidity: min_liq,
                     });
                 }
             }
@@ -120,4 +114,4 @@ pub fn scan_triangles(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     out
-            }
+        }

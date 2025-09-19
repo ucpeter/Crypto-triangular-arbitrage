@@ -6,26 +6,30 @@
   <title>Arbitrage Scanner</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { background-color: #1e1e1e; color: #f0f0f0; }
+    body { background-color: #1e1e1e; color: #f0f0f0; font-size: 0.9rem; }
     th { background-color: #1e40af; cursor: pointer; }
     table { border-collapse: collapse; }
-    td, th { border: 1px solid #333; padding: 8px; }
+    td, th { border: 1px solid #333; padding: 6px 8px; }
     tbody tr:nth-child(odd) { background-color: #2a2a2a; }
     tbody tr:nth-child(even) { background-color: #1f2937; }
     tbody tr:hover { background-color: #374151; }
     .number-col { position: sticky; left: 0; background: #111827; z-index: 2; }
     thead th { position: sticky; top: 0; z-index: 3; }
     .sort-indicator { margin-left: 4px; }
-    .table-wrapper { overflow-x: auto; overflow-y: auto; border: 1px solid #333; border-radius: 8px; max-height: 500px; }
+    .table-wrapper { 
+      overflow-x: auto; 
+      overflow-y: auto; 
+      max-height: 500px; 
+      border: 1px solid #333; 
+      border-radius: 8px; 
+    }
     th, td { white-space: nowrap; }
-    .profit-positive { color: #22c55e; font-weight: bold; }
-    .profit-negative { color: #ef4444; font-weight: bold; }
   </style>
 </head>
 <body class="p-4">
   <h1 class="text-2xl font-bold mb-4">Arbitrage Scanner</h1>
 
-  <!-- Scan Controls -->
+  <!-- Controls -->
   <div class="flex flex-col md:flex-row gap-4 mb-6">
     <div>
       <label class="block text-sm">Select Exchange</label>
@@ -49,28 +53,21 @@
     </div>
   </div>
 
-  <!-- Scan status -->
+  <!-- Status -->
   <div id="status" class="mb-4 text-sm text-gray-300"></div>
 
-  <!-- Results Table -->
+  <!-- Results -->
   <div id="resultsContainer" class="hidden table-wrapper">
     <table class="min-w-full text-sm">
       <thead>
         <tr>
           <th class="number-col">#</th>
-          <th>Triangle / Pairs</th>
-          <th data-sort="profit_before">
-            Profit % (Before Fee) <span class="sort-indicator"></span>
-          </th>
-          <th data-sort="fees">
-            Fees % <span class="sort-indicator"></span>
-          </th>
-          <th data-sort="profit_after">
-            Profit % (After Fee) <span class="sort-indicator"></span>
-          </th>
-          <th data-sort="score_liquidity">
-            Min Liquidity <span class="sort-indicator"></span>
-          </th>
+          <th>Triangle</th>
+          <th>Pairs</th>
+          <th data-sort="profit_before">Profit % (Before Fee) <span class="sort-indicator"></span></th>
+          <th data-sort="fees">Fees % <span class="sort-indicator"></span></th>
+          <th data-sort="profit_after">Profit % (After Fee) <span class="sort-indicator"></span></th>
+          <th data-sort="score_liquidity">Min Liquidity <span class="sort-indicator"></span></th>
           <th>Liquidity (Legs)</th>
         </tr>
       </thead>
@@ -88,6 +85,7 @@
     let sortConfig = { key: "profit_after", asc: false };
 
     function formatLiquidity(val) {
+      if (!val || isNaN(val)) return "-";
       if (val >= 1_000_000_000) return (val / 1_000_000_000).toFixed(2) + "B";
       if (val >= 1_000_000) return (val / 1_000_000).toFixed(2) + "M";
       if (val >= 1_000) return (val / 1_000).toFixed(2) + "K";
@@ -100,18 +98,16 @@
         const row = document.createElement("tr");
         row.innerHTML = `
           <td class="number-col text-center">${idx + 1}</td>
-          <td>
-            <div class="font-semibold">${opp.triangle}</div>
-            <div class="text-gray-400 text-xs">${opp.pairs.join(", ")}</div>
-          </td>
+          <td>${opp.triangle}</td>
+          <td>${Array.isArray(opp.pairs) ? opp.pairs.join(", ") : opp.pairs}</td>
           <td class="text-right">${opp.profit_before.toFixed(2)}%</td>
           <td class="text-right">${opp.fees.toFixed(2)}%</td>
-          <td class="text-right ${opp.profit_after >= 0 ? "profit-positive" : "profit-negative"}">
+          <td class="text-right ${opp.profit_after >= 0 ? 'text-green-400' : 'text-red-400'}">
             ${opp.profit_after.toFixed(2)}%
           </td>
           <td class="text-right">${formatLiquidity(opp.score_liquidity)}</td>
           <td class="text-right">
-            ${opp.liquidity_legs.map(l => formatLiquidity(l)).join(" / ")}
+            ${opp.liquidity_legs ? opp.liquidity_legs.map(l => formatLiquidity(l)).join(" / ") : "-"}
           </td>
         `;
         resultsBody.appendChild(row);
@@ -178,11 +174,12 @@
         }
 
         const data = await res.json();
-        statusEl.textContent = `Scan complete. Found ${data.results.length} opportunities.`;
+        statusEl.textContent = `Scan complete. Found ${data.count || data.length} opportunities.`;
 
-        if (data.results.length > 0) {
+        const results = data.results || data; 
+        if (results.length > 0) {
           resultsContainer.classList.remove("hidden");
-          currentData = data.results;
+          currentData = results;
           sortAndRender();
         }
       } catch (err) {
@@ -191,4 +188,4 @@
     });
   </script>
 </body>
-</html>
+  </html>

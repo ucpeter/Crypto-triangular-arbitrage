@@ -62,26 +62,25 @@
   <div id="resultsContainer" class="hidden table-wrapper">
     <table class="min-w-full text-sm">
       <thead>
-        <tr>
-          <th class="number-col">#</th>
-          <th>Triangle</th>
-          <th>Pairs</th>
-          <th data-sort="profit_before_fees">
-            Profit % (Before Fee) <span class="sort-indicator"></span>
-          </th>
-          <th data-sort="trade_fees">
-            Fees % <span class="sort-indicator"></span>
-          </th>
-          <th data-sort="profit_after_fees">
-            Profit % (After Fee) <span class="sort-indicator"></span>
-          </th>
-          <th data-sort="min_liquidity">
-            Min Liquidity <span class="sort-indicator"></span>
-          </th>
-          <th>Liquidity (Legs)</th>
-        </tr>
-      </thead>
-      <tbody id="resultsBody"></tbody>
+  <tr>
+    <th class="number-col">#</th>
+    <th>Triangle / Pairs</th>
+    <th data-sort="profit_before">
+      Profit % (Before Fee) <span class="sort-indicator"></span>
+    </th>
+    <th data-sort="fees">
+      Fees % <span class="sort-indicator"></span>
+    </th>
+    <th data-sort="profit_after">
+      Profit % (After Fee) <span class="sort-indicator"></span>
+    </th>
+    <th data-sort="score_liquidity">
+      Min Liquidity <span class="sort-indicator"></span>
+    </th>
+    <th>Liquidity (Legs)</th>
+  </tr>
+</thead>
+<tbody id="resultsBody"></tbody>
     </table>
   </div>
 
@@ -106,19 +105,21 @@
       data.forEach((opp, idx) => {
         const row = document.createElement("tr");
         row.innerHTML = `
-          <td class="number-col text-center">${idx + 1}</td>
-          <td>${opp.triangle}</td>
-          <td>${opp.pairs}</td>
-          <td class="text-right">${opp.profit_before_fees.toFixed(2)}%</td>
-          <td class="text-right">${opp.trade_fees.toFixed(2)}%</td>
-          <td class="text-right ${opp.profit_after_fees >= 0 ? "profit-positive" : "profit-negative"}">
-            ${opp.profit_after_fees.toFixed(2)}%
-          </td>
-          <td class="text-right">${formatLiquidity(opp.min_liquidity || 0)}</td>
-          <td class="text-right">
-            ${(opp.leg_liquidities || []).map(l => formatLiquidity(l)).join(" / ")}
-          </td>
-        `;
+  <td class="number-col text-center">${idx + 1}</td>
+  <td>
+    <div class="font-semibold">${opp.triangle}</div>
+    <div class="text-gray-400 text-xs">${opp.pairs.join(", ")}</div>
+  </td>
+  <td class="text-right">${opp.profit_before.toFixed(2)}%</td>
+  <td class="text-right">${opp.fees.toFixed(2)}%</td>
+  <td class="text-right ${
+    opp.profit_after >= 0 ? "profit-positive" : "profit-negative"
+  }">${opp.profit_after.toFixed(2)}%</td>
+  <td class="text-right">${formatLiquidity(opp.score_liquidity)}</td>
+  <td class="text-right">
+    ${opp.liquidity_legs.map(l => formatLiquidity(l)).join(" / ")}
+  </td>
+`;
         resultsBody.appendChild(row);
       });
     }

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// Shared app state
+/// Shared app state (you can extend this if needed)
 #[derive(Default)]
 pub struct AppState {
     pub last_results: Option<Vec<TriangularResult>>,
@@ -28,7 +28,8 @@ pub struct PairPrice {
     pub quote: String,
     pub price: f64,
     pub is_spot: bool,
-    pub liquidity: f64, // ✅ new: reported 24h quote volume
+    /// Reported 24h volume (quote or base, normalized to quote for consistency)
+    pub volume: f64,
 }
 
 /// Single triangular arbitrage opportunity
@@ -44,6 +45,12 @@ pub struct TriangularResult {
     pub trade_fees: f64,
     /// Net profit margin after fees
     pub profit_after_fees: f64,
-    /// ✅ minimum liquidity among the 3 legs (quote currency volume)
+    /// Liquidity for leg 1
+    pub liquidity_leg1: f64,
+    /// Liquidity for leg 2
+    pub liquidity_leg2: f64,
+    /// Liquidity for leg 3
+    pub liquidity_leg3: f64,
+    /// Minimum liquidity across the three legs
     pub min_liquidity: f64,
 }

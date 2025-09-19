@@ -6,30 +6,26 @@
   <title>Arbitrage Scanner</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { background-color: #1e1e1e; color: #f0f0f0; font-size: 0.9rem; }
+    body { background-color: #1e1e1e; color: #f0f0f0; }
     th { background-color: #1e40af; cursor: pointer; }
-    table { border-collapse: collapse; }
-    td, th { border: 1px solid #333; padding: 6px 8px; }
+    table { border-collapse: collapse; font-size: 0.875rem; } /* smaller text */
+    td, th { border: 1px solid #333; padding: 6px 8px; } /* tighter spacing */
     tbody tr:nth-child(odd) { background-color: #2a2a2a; }
     tbody tr:nth-child(even) { background-color: #1f2937; }
     tbody tr:hover { background-color: #374151; }
     .number-col { position: sticky; left: 0; background: #111827; z-index: 2; }
     thead th { position: sticky; top: 0; z-index: 3; }
     .sort-indicator { margin-left: 4px; }
-    .table-wrapper { 
-      overflow-x: auto; 
-      overflow-y: auto; 
-      max-height: 500px; 
-      border: 1px solid #333; 
-      border-radius: 8px; 
-    }
+    .table-wrapper { overflow-x: auto; overflow-y: auto; max-height: 500px; border: 1px solid #333; border-radius: 8px; }
     th, td { white-space: nowrap; }
+    .profit-positive { color: #22c55e; font-weight: bold; }
+    .profit-negative { color: #ef4444; font-weight: bold; }
   </style>
 </head>
 <body class="p-4">
   <h1 class="text-2xl font-bold mb-4">Arbitrage Scanner</h1>
 
-  <!-- Controls -->
+  <!-- Scan Controls -->
   <div class="flex flex-col md:flex-row gap-4 mb-6">
     <div>
       <label class="block text-sm">Select Exchange</label>
@@ -45,6 +41,11 @@
       <input id="minProfit" type="number" value="0" step="0.1"
         class="bg-gray-800 p-2 rounded w-full md:w-40"/>
     </div>
+    <div>
+      <label class="block text-sm">Collect Window (seconds)</label>
+      <input id="collectSeconds" type="number" value="5" min="1"
+        class="bg-gray-800 p-2 rounded w-full md:w-40"/>
+    </div>
     <div class="flex items-end">
       <button id="scanBtn"
         class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-white">
@@ -53,12 +54,12 @@
     </div>
   </div>
 
-  <!-- Status -->
+  <!-- Scan status -->
   <div id="status" class="mb-4 text-sm text-gray-300"></div>
 
-  <!-- Results -->
+  <!-- Results Table -->
   <div id="resultsContainer" class="hidden table-wrapper">
-    <table class="min-w-full text-sm">
+    <table class="min-w-full">
       <thead>
         <tr>
           <th class="number-col">#</th>
@@ -92,10 +93,6 @@
       return val.toFixed(2);
     }
 
-    function safeNum(val) {
-      return (typeof val === "number" && !isNaN(val)) ? val : 0;
-    }
-
     function renderTable(data) {
       resultsBody.innerHTML = "";
       data.forEach((opp, idx) => {
@@ -103,15 +100,15 @@
         row.innerHTML = `
           <td class="number-col text-center">${idx + 1}</td>
           <td>${opp.triangle || "-"}</td>
-          <td>${Array.isArray(opp.pairs) ? opp.pairs.join(", ") : (opp.pairs || "-")}</td>
-          <td class="text-right">${safeNum(opp.profit_before).toFixed(2)}%</td>
-          <td class="text-right">${safeNum(opp.fees).toFixed(2)}%</td>
-          <td class="text-right ${safeNum(opp.profit_after) >= 0 ? 'text-green-400' : 'text-red-400'}">
-            ${safeNum(opp.profit_after).toFixed(2)}%
+          <td>${typeof opp.pairs === "string" ? opp.pairs : (opp.pairs || "-")}</td>
+          <td class="text-right">${opp.profit_before?.toFixed(2) ?? "0.00"}%</td>
+          <td class="text-right">${opp.fees?.toFixed(2) ?? "0.00"}%</td>
+          <td class="text-right ${opp.profit_after > 0 ? "profit-positive" : "profit-negative"}">
+            ${opp.profit_after?.toFixed(2) ?? "0.00"}%
           </td>
           <td class="text-right">${formatLiquidity(opp.score_liquidity)}</td>
           <td class="text-right">
-            ${opp.liquidity_legs ? opp.liquidity_legs.map(l => formatLiquidity(l)).join(" / ") : "-"}
+            ${(opp.liquidity_legs || []).map(l => formatLiquidity(l)).join(" / ")}
           </td>
         `;
         resultsBody.appendChild(row);
@@ -123,19 +120,18 @@
         const key = th.getAttribute("data-sort");
         const span = th.querySelector(".sort-indicator");
         if (!span) return;
-        if (sortConfig.key === key) {
-          span.textContent = sortConfig.asc ? "▲" : "▼";
-        } else {
-          span.textContent = "";
-        }
+        span.textContent = sortConfig.key === key ? (sortConfig.asc ? "▲" : "▼") : "";
       });
     }
 
     function sortAndRender() {
       const sorted = [...currentData].sort((a, b) => {
-        const valA = safeNum(a[sortConfig.key]);
-        const valB = safeNum(b[sortConfig.key]);
-        return sortConfig.asc ? valA - valB : valB - valA;
+        const valA = a[sortConfig.key];
+        const valB = b[sortConfig.key];
+        if (typeof valA === "number" && typeof valB === "number") {
+          return sortConfig.asc ? valA - valB : valB - valA;
+        }
+        return 0;
       });
       renderTable(sorted);
       updateSortIndicators();
@@ -157,6 +153,7 @@
     scanBtn.addEventListener("click", async () => {
       const exchange = document.getElementById("exchange").value;
       const minProfit = parseFloat(document.getElementById("minProfit").value);
+      const collectSeconds = parseInt(document.getElementById("collectSeconds").value);
 
       statusEl.textContent = `Scanning ${exchange}...`;
       resultsContainer.classList.add("hidden");
@@ -166,7 +163,7 @@
         const res = await fetch("/scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ exchanges: [exchange], min_profit: minProfit })
+          body: JSON.stringify({ exchanges: [exchange], min_profit: minProfit, collect_seconds: collectSeconds })
         });
 
         if (!res.ok) {
@@ -175,12 +172,11 @@
         }
 
         const data = await res.json();
-        statusEl.textContent = `Scan complete. Found ${data.count || data.length} opportunities.`;
+        statusEl.textContent = `Scan complete. Found ${data.results.length} opportunities.`;
 
-        const results = data.results || data; 
-        if (results.length > 0) {
+        if (data.results.length > 0) {
           resultsContainer.classList.remove("hidden");
-          currentData = results;
+          currentData = data.results;
           sortAndRender();
         }
       } catch (err) {
@@ -189,4 +185,4 @@
     });
   </script>
 </body>
-            </html>
+</html>

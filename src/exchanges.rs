@@ -2,6 +2,7 @@ use crate::models::PairPrice;
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::error::Error;
 use tracing::info;
 
 /// ---------------- Binance ----------------
@@ -25,25 +26,26 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
         }
     }
 
+    // ✅ Use 24hr ticker for price + liquidity
     let price_url = "https://api.binance.com/api/v3/ticker/24hr";
-    let prices: Value = client.get(price_url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+    let tickers: Value = client.get(price_url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
 
     let mut out = Vec::new();
-    if let Some(arr) = prices.as_array() {
+    if let Some(arr) = tickers.as_array() {
         for obj in arr {
             if let (Some(symbol), Some(price_str), Some(vol_str)) =
                 (obj["symbol"].as_str(), obj["lastPrice"].as_str(), obj["quoteVolume"].as_str())
             {
                 let symbol = symbol.to_uppercase();
                 if let Some((base, quote)) = symbol_map.get(&symbol) {
-                    if let (Ok(price), Ok(liquidity)) = (price_str.parse::<f64>(), vol_str.parse::<f64>()) {
-                        if price > 0.0 {
+                    if let (Ok(price), Ok(vol)) = (price_str.parse::<f64>(), vol_str.parse::<f64>()) {
+                        if price > 0.0 && vol > 0.0 {
                             out.push(PairPrice {
                                 base: base.clone(),
                                 quote: quote.clone(),
                                 price,
                                 is_spot: true,
-                                liquidity,
+                                liquidity: vol,
                             });
                         }
                     }
@@ -79,18 +81,18 @@ async fn fetch_kucoin(client: &Client) -> Result<Vec<PairPrice>, String> {
     if let Some(arr) = resp["data"]["ticker"].as_array() {
         for obj in arr {
             if let (Some(symbol), Some(price_str), Some(vol_str)) =
-                (obj["symbol"].as_str(), obj["last"].as_str(), obj["volValue"].as_str())
+                (obj["symbol"].as_str(), obj["last"].as_str(), obj["volValue"].as_str()) // ✅ volValue = quote volume
             {
                 if !tradable.contains(symbol) { continue; }
                 if let Some((base, quote)) = symbol.split_once('-') {
-                    if let (Ok(price), Ok(liquidity)) = (price_str.parse::<f64>(), vol_str.parse::<f64>()) {
-                        if price > 0.0 {
+                    if let (Ok(price), Ok(vol)) = (price_str.parse::<f64>(), vol_str.parse::<f64>()) {
+                        if price > 0.0 && vol > 0.0 {
                             out.push(PairPrice {
                                 base: base.to_string(),
                                 quote: quote.to_string(),
                                 price,
                                 is_spot: true,
-                                liquidity,
+                                liquidity: vol,
                             });
                         }
                     }
@@ -107,6 +109,7 @@ async fn fetch_kucoin(client: &Client) -> Result<Vec<PairPrice>, String> {
 pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
     info!("fetching bybit");
 
+    // Step 1: Get active spot instruments
     let info_url = "https://api.bybit.com/v5/market/instruments-info?category=spot";
     let info: Value = client.get(info_url).send().await
         .map_err(|e| format!("bybit instruments error: {}", e))?
@@ -137,6 +140,7 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
         }
     }
 
+    // Step 2: fetch live prices + volume
     let url = "https://api.bybit.com/v5/market/tickers?category=spot";
     let resp: Value = client.get(url).send().await
         .map_err(|e| format!("bybit tickers error: {}", e))?
@@ -147,21 +151,18 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
     if let Some(arr) = resp["result"]["list"].as_array() {
         for obj in arr {
             if let (Some(symbol), Some(price_str), Some(vol_str)) =
-                (obj.get("symbol"), obj.get("lastPrice"), obj.get("turnover24h"))
+                (obj.get("symbol"), obj.get("lastPrice"), obj.get("quoteVolume24h")) // ✅ liquidity from quoteVolume24h
             {
                 let symbol = symbol.as_str().unwrap().to_uppercase();
                 if let Some((base, quote)) = symbol_map.get(&symbol) {
-                    if let (Ok(price), Ok(liquidity)) = (
-                        price_str.as_str().unwrap().parse::<f64>(),
-                        vol_str.as_str().unwrap().parse::<f64>(),
-                    ) {
-                        if price > 0.0 {
+                    if let (Ok(price), Ok(vol)) = (price_str.as_str().unwrap().parse::<f64>(), vol_str.as_str().unwrap().parse::<f64>()) {
+                        if price > 0.0 && vol > 0.0 {
                             out.push(PairPrice {
                                 base: base.clone(),
                                 quote: quote.clone(),
                                 price,
                                 is_spot: true,
-                                liquidity,
+                                liquidity: vol,
                             });
                         }
                     }
@@ -183,6 +184,25 @@ pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
         .build()
         .map_err(|e| format!("gateio client build error: {}", e))?;
 
+    let symbols_url = "https://api.gateio.ws/api/v4/spot/currency_pairs";
+    let symbols_resp = client.get(symbols_url).send().await
+        .map_err(|e| format!("gateio symbols http error: {}", e))?;
+
+    let raw_symbols = symbols_resp.text().await
+        .map_err(|e| format!("gateio symbols read error: {}", e))?;
+
+    let symbols: Vec<Value> = serde_json::from_str(&raw_symbols)
+        .map_err(|e| format!("gateio decode symbols error: {}. First 100 chars: {}", e, &raw_symbols.chars().take(100).collect::<String>()))?;
+
+    let mut tradable = HashSet::new();
+    for s in symbols {
+        if s["trade_status"] == "tradable" {
+            if let Some(id) = s["id"].as_str() {
+                tradable.insert(id.to_uppercase());
+            }
+        }
+    }
+
     let url = "https://api.gateio.ws/api/v4/spot/tickers";
     let resp = client.get(url).send().await
         .map_err(|e| format!("gateio tickers http error: {}", e))?;
@@ -196,19 +216,21 @@ pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
     let mut out = Vec::new();
     for v in json {
         if let (Some(symbol), Some(last_str), Some(vol_str)) =
-            (v["currency_pair"].as_str(), v["last"].as_str(), v["quote_volume"].as_str())
+            (v["currency_pair"].as_str(), v["last"].as_str(), v["quote_volume"].as_str()) // ✅ liquidity from quote_volume
         {
+            let symbol = symbol.to_uppercase();
+            if !tradable.contains(&symbol) { continue; }
             if let Ok(price) = last_str.parse::<f64>() {
-                if let Ok(liquidity) = vol_str.parse::<f64>() {
-                    if price > 0.0 {
-                        let parts: Vec<&str> = symbol.split('_').collect();
-                        if parts.len() == 2 {
+                if price > 0.0 {
+                    let parts: Vec<&str> = symbol.split('_').collect();
+                    if parts.len() == 2 {
+                        if let Ok(vol) = vol_str.parse::<f64>() {
                             out.push(PairPrice {
                                 base: parts[0].to_string(),
                                 quote: parts[1].to_string(),
                                 price,
                                 is_spot: true,
-                                liquidity,
+                                liquidity: vol,
                             });
                         }
                     }

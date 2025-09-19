@@ -92,18 +92,22 @@
       return val.toFixed(2);
     }
 
+    function safeNum(val) {
+      return (typeof val === "number" && !isNaN(val)) ? val : 0;
+    }
+
     function renderTable(data) {
       resultsBody.innerHTML = "";
       data.forEach((opp, idx) => {
         const row = document.createElement("tr");
         row.innerHTML = `
           <td class="number-col text-center">${idx + 1}</td>
-          <td>${opp.triangle}</td>
-          <td>${Array.isArray(opp.pairs) ? opp.pairs.join(", ") : opp.pairs}</td>
-          <td class="text-right">${opp.profit_before.toFixed(2)}%</td>
-          <td class="text-right">${opp.fees.toFixed(2)}%</td>
-          <td class="text-right ${opp.profit_after >= 0 ? 'text-green-400' : 'text-red-400'}">
-            ${opp.profit_after.toFixed(2)}%
+          <td>${opp.triangle || "-"}</td>
+          <td>${Array.isArray(opp.pairs) ? opp.pairs.join(", ") : (opp.pairs || "-")}</td>
+          <td class="text-right">${safeNum(opp.profit_before).toFixed(2)}%</td>
+          <td class="text-right">${safeNum(opp.fees).toFixed(2)}%</td>
+          <td class="text-right ${safeNum(opp.profit_after) >= 0 ? 'text-green-400' : 'text-red-400'}">
+            ${safeNum(opp.profit_after).toFixed(2)}%
           </td>
           <td class="text-right">${formatLiquidity(opp.score_liquidity)}</td>
           <td class="text-right">
@@ -129,12 +133,9 @@
 
     function sortAndRender() {
       const sorted = [...currentData].sort((a, b) => {
-        const valA = a[sortConfig.key];
-        const valB = b[sortConfig.key];
-        if (typeof valA === "number" && typeof valB === "number") {
-          return sortConfig.asc ? valA - valB : valB - valA;
-        }
-        return 0;
+        const valA = safeNum(a[sortConfig.key]);
+        const valB = safeNum(b[sortConfig.key]);
+        return sortConfig.asc ? valA - valB : valB - valA;
       });
       renderTable(sorted);
       updateSortIndicators();
@@ -188,4 +189,4 @@
     });
   </script>
 </body>
-  </html>
+            </html>

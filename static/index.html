@@ -1,137 +1,199 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Arbitrage Scanner</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #1e1e1e; color: #f0f0f0; }
+    th { background-color: #1e40af; cursor: pointer; color: white; }
+    table { border-collapse: collapse; font-size: 0.85rem; }
+    td, th { border: 1px solid #333; padding: 6px 10px; }
+    tbody tr:nth-child(odd) { background-color: #2a2a2a; }
+    tbody tr:nth-child(even) { background-color: #1f2937; }
+    tbody tr:hover { background-color: #374151; }
+    .number-col { position: sticky; left: 0; background: #111827; z-index: 2; }
+    thead th { position: sticky; top: 0; z-index: 3; }
+    .sort-indicator { margin-left: 4px; }
+    .table-wrapper { 
+      overflow-x: auto; 
+      overflow-y: auto; 
+      max-height: 500px; 
+      border: 1px solid #333; 
+      border-radius: 8px;
+    }
+    th, td { white-space: nowrap; }
+    .profit-positive { color: #4ade80; font-weight: 600; }
+    .profit-negative { color: #f87171; font-weight: 600; }
+  </style>
 </head>
-<body class="bg-gray-900 text-gray-100 min-h-screen flex flex-col items-center p-4">
-  <div class="w-full max-w-6xl">
-    <h1 class="text-2xl font-bold mb-4">Arbitrage Scanner</h1>
+<body class="p-4">
+  <h1 class="text-2xl font-bold mb-4">Arbitrage Scanner</h1>
 
-    <!-- Controls -->
-    <div class="flex flex-col md:flex-row gap-4 mb-4">
-      <div class="flex-1">
-        <label class="block text-sm mb-1">Select Exchange</label>
-        <select id="exchange" class="w-full bg-gray-800 border border-gray-700 rounded p-2">
-          <option value="binance">Binance</option>
-          <option value="kucoin">KuCoin</option>
-          <option value="bybit">Bybit</option>
-          <option value="gateio">Gate.io</option>
-        </select>
-      </div>
-      <div class="flex-1">
-        <label class="block text-sm mb-1">Minimum Profit %</label>
-        <input type="number" id="min-profit" value="0" class="w-full bg-gray-800 border border-gray-700 rounded p-2" />
-      </div>
-      <div class="flex items-end">
-        <button id="scan-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
-          Scan
-        </button>
-      </div>
+  <!-- Scan Controls -->
+  <div class="flex flex-col md:flex-row gap-4 mb-6">
+    <div>
+      <label class="block text-sm">Select Exchange</label>
+      <select id="exchange" class="bg-gray-800 p-2 rounded w-full md:w-40">
+        <option value="binance">Binance</option>
+        <option value="bybit">Bybit</option>
+        <option value="gateio">Gate.io</option>
+        <option value="kucoin">Kucoin</option>
+      </select>
     </div>
-
-    <!-- Error -->
-    <div id="error" class="text-red-400 mb-2 hidden"></div>
-
-    <!-- Results Table -->
-    <div class="overflow-x-auto overflow-y-auto max-h-[70vh] border border-gray-700 rounded">
-      <table class="border-collapse border border-gray-700 text-xs w-full min-w-[1000px]">
-        <thead class="sticky top-0 bg-gray-800 text-gray-200 z-10">
-          <tr>
-            <th class="border border-gray-700 px-2 py-1">#</th>
-            <th class="border border-gray-700 px-2 py-1">Triangle</th>
-            <th class="border border-gray-700 px-2 py-1">Pairs</th>
-            <th class="border border-gray-700 px-2 py-1">Profit % (Before Fee)</th>
-            <th class="border border-gray-700 px-2 py-1">Fees %</th>
-            <th class="border border-gray-700 px-2 py-1">Profit % (After Fee)</th>
-            <th class="border border-gray-700 px-2 py-1">L1</th>
-            <th class="border border-gray-700 px-2 py-1">L2</th>
-            <th class="border border-gray-700 px-2 py-1">L3</th>
-            <th class="border border-gray-700 px-2 py-1">Min L</th>
-          </tr>
-        </thead>
-        <tbody id="results-table" class="text-gray-100"></tbody>
-      </table>
+    <div>
+      <label class="block text-sm">Minimum Profit %</label>
+      <input id="minProfit" type="number" value="0" step="0.1"
+        class="bg-gray-800 p-2 rounded w-full md:w-40"/>
+    </div>
+    <div class="flex items-end">
+      <button id="scanBtn"
+        class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-white">
+        Scan
+      </button>
     </div>
   </div>
 
+  <!-- Scan status -->
+  <div id="status" class="mb-4 text-sm text-gray-300"></div>
+
+  <!-- Results Table -->
+  <div id="resultsContainer" class="hidden table-wrapper">
+    <table class="min-w-full text-sm">
+      <thead>
+        <tr>
+          <th class="number-col">#</th>
+          <th>Triangle</th>
+          <th>Pairs</th>
+          <th data-sort="profit_before_fees">
+            Profit % (Before Fee) <span class="sort-indicator"></span>
+          </th>
+          <th data-sort="trade_fees">
+            Fees % <span class="sort-indicator"></span>
+          </th>
+          <th data-sort="profit_after_fees">
+            Profit % (After Fee) <span class="sort-indicator"></span>
+          </th>
+          <th data-sort="min_liquidity">
+            Min Liquidity <span class="sort-indicator"></span>
+          </th>
+          <th>Liquidity (Legs)</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
+  </div>
+
   <script>
-    function safeFixed(val, digits = 2) {
-      return (val !== undefined && val !== null && !isNaN(val))
-        ? Number(val).toFixed(digits)
-        : "-";
-    }
+    const scanBtn = document.getElementById("scanBtn");
+    const statusEl = document.getElementById("status");
+    const resultsContainer = document.getElementById("resultsContainer");
+    const resultsBody = document.getElementById("resultsBody");
+
+    let currentData = [];
+    let sortConfig = { key: "profit_after_fees", asc: false }; // default sort
 
     function formatLiquidity(val) {
-      if (val === undefined || val === null || isNaN(val)) return "-";
-      val = Number(val);
-      if (val >= 1e9) return (val / 1e9).toFixed(2) + "b";
-      if (val >= 1e6) return (val / 1e6).toFixed(2) + "m";
-      if (val >= 1e3) return (val / 1e3).toFixed(2) + "k";
-      if (val >= 1e2) return (val / 1e2).toFixed(2) + "h";
+      if (val >= 1_000_000_000) return (val / 1_000_000_000).toFixed(2) + "B";
+      if (val >= 1_000_000) return (val / 1_000_000).toFixed(2) + "M";
+      if (val >= 1_000) return (val / 1_000).toFixed(2) + "K";
       return val.toFixed(2);
     }
 
-    function profitColor(val, after = false) {
-      if (val === undefined || val === null || isNaN(val)) return "";
-      if (val > 0) return after ? "text-green-400 font-bold" : "text-green-300";
-      if (val < 0) return after ? "text-red-400 font-bold" : "text-red-300";
-      return "";
+    function renderTable(data) {
+      resultsBody.innerHTML = "";
+      data.forEach((opp, idx) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td class="number-col text-center">${idx + 1}</td>
+          <td>${opp.triangle}</td>
+          <td>${opp.pairs}</td>
+          <td class="text-right">${opp.profit_before_fees.toFixed(2)}%</td>
+          <td class="text-right">${opp.trade_fees.toFixed(2)}%</td>
+          <td class="text-right ${opp.profit_after_fees >= 0 ? "profit-positive" : "profit-negative"}">
+            ${opp.profit_after_fees.toFixed(2)}%
+          </td>
+          <td class="text-right">${formatLiquidity(opp.min_liquidity || 0)}</td>
+          <td class="text-right">
+            ${(opp.leg_liquidities || []).map(l => formatLiquidity(l)).join(" / ")}
+          </td>
+        `;
+        resultsBody.appendChild(row);
+      });
     }
 
-    async function runScan() {
-      const exchange = document.getElementById("exchange").value;
-      const minProfit = parseFloat(document.getElementById("min-profit").value) || 0;
-      const errorDiv = document.getElementById("error");
-      const tableBody = document.getElementById("results-table");
+    function updateSortIndicators() {
+      document.querySelectorAll("th[data-sort]").forEach(th => {
+        const key = th.getAttribute("data-sort");
+        const span = th.querySelector(".sort-indicator");
+        if (!span) return;
+        if (sortConfig.key === key) {
+          span.textContent = sortConfig.asc ? "▲" : "▼";
+        } else {
+          span.textContent = "";
+        }
+      });
+    }
 
-      errorDiv.classList.add("hidden");
-      tableBody.innerHTML = "";
+    function sortAndRender() {
+      const sorted = [...currentData].sort((a, b) => {
+        const valA = a[sortConfig.key];
+        const valB = b[sortConfig.key];
+        if (typeof valA === "number" && typeof valB === "number") {
+          return sortConfig.asc ? valA - valB : valB - valA;
+        }
+        return 0;
+      });
+      renderTable(sorted);
+      updateSortIndicators();
+    }
+
+    document.querySelectorAll("th[data-sort]").forEach(th => {
+      th.addEventListener("click", () => {
+        const key = th.getAttribute("data-sort");
+        if (sortConfig.key === key) {
+          sortConfig.asc = !sortConfig.asc;
+        } else {
+          sortConfig.key = key;
+          sortConfig.asc = true;
+        }
+        sortAndRender();
+      });
+    });
+
+    scanBtn.addEventListener("click", async () => {
+      const exchange = document.getElementById("exchange").value;
+      const minProfit = parseFloat(document.getElementById("minProfit").value);
+
+      statusEl.textContent = `Scanning ${exchange}...`;
+      resultsContainer.classList.add("hidden");
+      resultsBody.innerHTML = "";
 
       try {
         const res = await fetch("/scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ exchanges: [exchange], min_profit: minProfit }),
+          body: JSON.stringify({ exchanges: [exchange], min_profit: minProfit })
         });
-        const data = await res.json();
 
-        if (!data || !data.results) {
-          throw new Error("Invalid response from server");
+        if (!res.ok) {
+          statusEl.textContent = `Scan failed: ${res.status}`;
+          return;
         }
 
-        data.results.forEach((row, i) => {
-          const tr = document.createElement("tr");
+        const data = await res.json();
+        statusEl.textContent = `Scan complete. Found ${data.results.length} opportunities.`;
 
-          tr.innerHTML = `
-            <td class="border border-gray-700 px-2 py-1">${i + 1}</td>
-            <td class="border border-gray-700 px-2 py-1">${row.triangle}</td>
-            <td class="border border-gray-700 px-2 py-1">${row.pairs}</td>
-            <td class="border border-gray-700 px-2 py-1 ${profitColor(row.profit_before_fees)}">
-              ${safeFixed(row.profit_before_fees)}
-            </td>
-            <td class="border border-gray-700 px-2 py-1">${safeFixed(row.trade_fees)}</td>
-            <td class="border border-gray-700 px-2 py-1 ${profitColor(row.profit_after_fees, true)}">
-              ${safeFixed(row.profit_after_fees)}
-            </td>
-            <td class="border border-gray-700 px-2 py-1">${formatLiquidity(row.liquidity_leg1)}</td>
-            <td class="border border-gray-700 px-2 py-1">${formatLiquidity(row.liquidity_leg2)}</td>
-            <td class="border border-gray-700 px-2 py-1">${formatLiquidity(row.liquidity_leg3)}</td>
-            <td class="border border-gray-700 px-2 py-1">${formatLiquidity(row.min_liquidity)}</td>
-          `;
-
-          tableBody.appendChild(tr);
-        });
+        if (data.results.length > 0) {
+          resultsContainer.classList.remove("hidden");
+          currentData = data.results;
+          sortAndRender();
+        }
       } catch (err) {
-        console.error(err);
-        errorDiv.textContent = "Scan error: " + err.message;
-        errorDiv.classList.remove("hidden");
+        statusEl.textContent = "Scan error: " + err;
       }
-    }
-
-    document.getElementById("scan-btn").addEventListener("click", runScan);
+    });
   </script>
 </body>
-</html>
+  </html>

@@ -70,4 +70,4 @@ pub fn find_triangular_arbitrage(pairs: &[PairPrice], fee_rate: f64) -> Vec<Arbi
     }
 
     results
-            }                              }
+            }             

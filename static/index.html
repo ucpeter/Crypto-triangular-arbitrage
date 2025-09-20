@@ -24,6 +24,12 @@
       border-radius: 8px;
     }
     th, td { white-space: nowrap; }
+    /* tighter spacing between Pairs and Profit Before Fee */
+    td.pairs-col, th.pairs-col,
+    td.profit-before-col, th.profit-before-col {
+      padding-right: 6px;
+      padding-left: 6px;
+    }
     .profit-positive { color: #4ade80; font-weight: 600; }
     .profit-negative { color: #f87171; font-weight: 600; }
   </style>
@@ -65,8 +71,8 @@
         <tr>
           <th class="number-col">#</th>
           <th>Triangle</th>
-          <th>Pairs</th>
-          <th data-sort="profit_before_fees">
+          <th class="pairs-col">Pairs</th>
+          <th class="profit-before-col" data-sort="profit_before_fees">
             Profit % (Before Fee) <span class="sort-indicator"></span>
           </th>
           <th data-sort="trade_fees">
@@ -92,9 +98,10 @@
     const resultsBody = document.getElementById("resultsBody");
 
     let currentData = [];
-    let sortConfig = { key: "profit_after_fees", asc: false }; // default sort
+    let sortConfig = { key: "profit_after_fees", asc: false };
 
     function formatLiquidity(val) {
+      if (!val || isNaN(val)) return "-";
       if (val >= 1_000_000_000) return (val / 1_000_000_000).toFixed(2) + "B";
       if (val >= 1_000_000) return (val / 1_000_000).toFixed(2) + "M";
       if (val >= 1_000) return (val / 1_000).toFixed(2) + "K";
@@ -108,8 +115,8 @@
         row.innerHTML = `
           <td class="number-col text-center">${idx + 1}</td>
           <td>${opp.triangle}</td>
-          <td>${opp.pairs}</td>
-          <td class="text-right">${opp.profit_before_fees.toFixed(2)}%</td>
+          <td class="pairs-col">${opp.pairs}</td>
+          <td class="profit-before-col text-right">${opp.profit_before_fees.toFixed(2)}%</td>
           <td class="text-right">${opp.trade_fees.toFixed(2)}%</td>
           <td class="text-right ${opp.profit_after_fees >= 0 ? "profit-positive" : "profit-negative"}">
             ${opp.profit_after_fees.toFixed(2)}%
@@ -128,11 +135,7 @@
         const key = th.getAttribute("data-sort");
         const span = th.querySelector(".sort-indicator");
         if (!span) return;
-        if (sortConfig.key === key) {
-          span.textContent = sortConfig.asc ? "▲" : "▼";
-        } else {
-          span.textContent = "";
-        }
+        span.textContent = sortConfig.key === key ? (sortConfig.asc ? "▲" : "▼") : "";
       });
     }
 

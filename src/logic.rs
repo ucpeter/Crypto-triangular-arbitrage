@@ -1,106 +1,73 @@
-use crate::models::{PairPrice, TriangularResult};
-use crate::utils::round2;
-use std::collections::{HashMap, HashSet};
+// src/logic.rs
+use crate::models::{PairPrice, ArbitrageOpportunity};
 
-/// Scan triangles using given pair prices (spot only).
-pub fn scan_triangles(
-    prices: &[PairPrice],
-    min_profit: f64,
-    fee_per_leg: f64,
-) -> Vec<TriangularResult> {
-    let mut rate: HashMap<(String, String), (f64, f64)> = HashMap::new(); // (price, liquidity)
-    let mut neighbors: HashMap<String, HashSet<String>> = HashMap::new();
+/// Compute arbitrage opportunities given a set of pair prices
+pub fn find_triangular_arbitrage(pairs: &[PairPrice], fee_rate: f64) -> Vec<ArbitrageOpportunity> {
+    let mut results = Vec::new();
 
-    for p in prices {
-        if !p.is_spot || !p.price.is_finite() || p.price <= 0.0 {
-            continue;
-        }
-
-        let a = p.base.to_uppercase();
-        let b = p.quote.to_uppercase();
-
-        // direct
-        rate.insert((a.clone(), b.clone()), (p.price, p.liquidity));
-        neighbors.entry(a.clone()).or_default().insert(b.clone());
-
-        // inverse (approx liquidity same as reported)
-        rate.insert((b.clone(), a.clone()), (1.0 / p.price, p.liquidity));
-        neighbors.entry(b.clone()).or_default().insert(a.clone());
+    // build a lookup for quick price access
+    let mut map = std::collections::HashMap::new();
+    for p in pairs {
+        map.insert((p.base.clone(), p.quote.clone()), p);
     }
 
-    let mut seen: HashSet<(String, String, String)> = HashSet::new();
-    let mut out: Vec<TriangularResult> = Vec::new();
-    let fee_mult_one = 1.0 - (fee_per_leg / 100.0);
-    let total_fee_percent = 3.0 * fee_per_leg;
+    let mut seen = std::collections::HashSet::new();
 
-    for (a, bs) in &neighbors {
-        for b in bs {
-            if a == b {
+    // brute force triangles
+    for a in pairs {
+        for b in pairs {
+            if a.quote != b.base {
                 continue;
             }
-            if let Some(cs) = neighbors.get(b) {
-                for c in cs {
-                    if c == a || c == b {
-                        continue;
-                    }
-                    if !neighbors.get(c).map_or(false, |s| s.contains(a)) {
-                        continue;
-                    }
-
-                    // lookup rates + liquidity
-                    let (r1, l1) = match rate.get(&(a.clone(), b.clone())) {
-                        Some(v) => *v,
-                        None => continue,
-                    };
-                    let (r2, l2) = match rate.get(&(b.clone(), c.clone())) {
-                        Some(v) => *v,
-                        None => continue,
-                    };
-                    let (r3, l3) = match rate.get(&(c.clone(), a.clone())) {
-                        Some(v) => *v,
-                        None => continue,
-                    };
-
-                    let gross = r1 * r2 * r3;
-                    let profit_before = (gross - 1.0) * 100.0;
-                    if !profit_before.is_finite() || profit_before < min_profit {
-                        continue;
-                    }
-
-                    let net = (r1 * fee_mult_one) * (r2 * fee_mult_one) * (r3 * fee_mult_one);
-                    let profit_after = (net - 1.0) * 100.0;
-
-                    let reps = vec![
-                        (a.clone(), b.clone(), c.clone()),
-                        (b.clone(), c.clone(), a.clone()),
-                        (c.clone(), a.clone(), b.clone()),
-                    ];
-                    let key = reps.iter().min().unwrap().clone();
-                    if !seen.insert(key) {
-                        continue;
-                    }
-
-                    let leg_liqs = [l1, l2, l3];
-                    let min_liq = leg_liqs.iter().cloned().fold(f64::INFINITY, f64::min);
-
-                    out.push(TriangularResult {
-                        triangle: format!("{} → {} → {} → {}", a, b, c, a),
-                        pairs: format!("{}/{} | {}/{} | {}/{}", a, b, b, c, c, a),
-                        profit_before_fees: round2(profit_before),
-                        trade_fees: round2(total_fee_percent),
-                        profit_after_fees: round2(profit_after),
-                        leg_liquidities: leg_liqs,
-                        min_liquidity: min_liq,
-                    });
+            for c in pairs {
+                if b.quote != c.base || c.quote != a.base {
+                    continue;
                 }
+
+                let triangle_key = format!("{}-{}-{}", a.base, a.quote, b.quote);
+                if seen.contains(&triangle_key) {
+                    continue;
+                }
+                seen.insert(triangle_key.clone());
+
+                let rate1 = a.price;
+                let rate2 = b.price;
+                let rate3 = c.price;
+
+                let mut amount = 1.0f64;
+                amount /= rate1;
+                amount /= rate2;
+                amount /= rate3;
+
+                let profit_before_fees = (amount - 1.0) * 100.0;
+                let total_fees = 3.0 * fee_rate * 100.0;
+                let profit_after_fees = profit_before_fees - total_fees;
+
+                // --- NEW: compute liquidity ---
+                // pick quote_volume as "effective liquidity" (since that's in stable quote terms)
+                let leg_liqs = vec![
+                    a.quote_volume.max(a.base_volume * a.price),
+                    b.quote_volume.max(b.base_volume * b.price),
+                    c.quote_volume.max(c.base_volume * c.price),
+                ];
+                let min_liq = leg_liqs.iter().cloned().fold(f64::INFINITY, f64::min);
+
+                results.push(ArbitrageOpportunity {
+                    triangle: triangle_key,
+                    pairs: vec![
+                        format!("{}/{}", a.base, a.quote),
+                        format!("{}/{}", b.base, b.quote),
+                        format!("{}/{}", c.base, c.quote),
+                    ],
+                    profit_before_fees,
+                    trade_fees: total_fees,
+                    profit_after_fees,
+                    min_liquidity: min_liq,
+                    leg_liquidities: leg_liqs,
+                });
             }
         }
     }
 
-    out.sort_by(|x, y| {
-        y.profit_after_fees
-            .partial_cmp(&x.profit_after_fees)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    out
-                              }
+    results
+            }                              }

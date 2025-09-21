@@ -28,7 +28,7 @@ pub struct PairPrice {
     pub quote: String,
     pub price: f64,
     pub is_spot: bool,
-    /// reported liquidity (24h quote volume = high 24h liquidity)
+    /// Reported liquidity (normalized to USD) based on **24h high quote volume**
     pub liquidity: f64,
 }
 
@@ -45,8 +45,8 @@ pub struct TriangularResult {
     pub trade_fees: f64,
     /// Net profit margin after fees
     pub profit_after_fees: f64,
-    /// Liquidity for each leg (24h quote volumes)
+    /// Liquidity (24h high) for each leg of the triangle
     pub leg_liquidities: [f64; 3],
-    /// Minimum liquidity across all legs (worst-case leg)
+    /// Minimum liquidity across all 3 legs (24h high)
     pub min_liquidity: f64,
-    }
+}

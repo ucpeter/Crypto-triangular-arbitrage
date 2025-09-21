@@ -26,51 +26,30 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
         }
     }
 
-    // Use 24hr ticker for price + liquidity candidates
+    // ✅ Use 24hr ticker for price + high liquidity
     let price_url = "https://api.binance.com/api/v3/ticker/24hr";
     let tickers: Value = client.get(price_url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
-
-    // small helper closure to parse either string or number into Option<f64>
-    let parse_val = |v: &Value| -> Option<f64> {
-        if v.is_null() { return None; }
-        if let Some(f) = v.as_f64() { return Some(f); }
-        if let Some(s) = v.as_str() { return s.parse::<f64>().ok(); }
-        None
-    };
 
     let mut out = Vec::new();
     if let Some(arr) = tickers.as_array() {
         for obj in arr {
-            let symbol = obj["symbol"].as_str().unwrap_or("").to_uppercase();
-            if let Some((base, quote)) = symbol_map.get(&symbol) {
-                // parse price
-                let price = parse_val(&obj["lastPrice"]).unwrap_or(0.0);
-
-                if price <= 0.0 { continue; }
-
-                // collect volume candidates (quote-volume fields + base-volume converted to quote)
-                let mut vol_candidates: Vec<f64> = Vec::new();
-
-                // quoteVolume (preferred)
-                if let Some(qv) = parse_val(&obj["quoteVolume"]) { vol_candidates.push(qv); }
-                // base volume (convert to quote by price)
-                if let Some(bv) = parse_val(&obj["volume"]) { vol_candidates.push(bv * price); }
-                // sometimes exchanges provide other names
-                if let Some(qv2) = parse_val(&obj["quoteQty"]) { vol_candidates.push(qv2); }
-                if let Some(turnover) = parse_val(&obj["quoteVolume24h"]) { vol_candidates.push(turnover); }
-                if let Some(turnover2) = parse_val(&obj["quoteQty24h"]) { vol_candidates.push(turnover2); }
-
-                // pick max (24h high liquidity across available fields)
-                let liquidity = vol_candidates.into_iter().fold(0.0_f64, |a, b| a.max(b));
-
-                if liquidity > 0.0 {
-                    out.push(PairPrice {
-                        base: base.clone(),
-                        quote: quote.clone(),
-                        price,
-                        is_spot: true,
-                        liquidity,
-                    });
+            if let (Some(symbol), Some(price_str), Some(vol_str)) =
+                (obj["symbol"].as_str(), obj["lastPrice"].as_str(), obj["quoteVolume"].as_str())
+            {
+                let symbol = symbol.to_uppercase();
+                if let Some((base, quote)) = symbol_map.get(&symbol) {
+                    if let (Ok(price), Ok(vol)) = (price_str.parse::<f64>(), vol_str.parse::<f64>()) {
+                        if price > 0.0 && vol > 0.0 {
+                            // Binance does not expose direct "high 24h volume", so keep quoteVolume as proxy
+                            out.push(PairPrice {
+                                base: base.clone(),
+                                quote: quote.clone(),
+                                price,
+                                is_spot: true,
+                                liquidity: vol, // ✅ still 24h volume (normalized in quote asset)
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -99,39 +78,25 @@ async fn fetch_kucoin(client: &Client) -> Result<Vec<PairPrice>, String> {
     let url = "https://api.kucoin.com/api/v1/market/allTickers";
     let resp: Value = client.get(url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
 
-    let parse_val = |v: &Value| -> Option<f64> {
-        if v.is_null() { return None; }
-        if let Some(f) = v.as_f64() { return Some(f); }
-        if let Some(s) = v.as_str() { return s.parse::<f64>().ok(); }
-        None
-    };
-
     let mut out = Vec::new();
     if let Some(arr) = resp["data"]["ticker"].as_array() {
         for obj in arr {
-            if let Some(symbol) = obj["symbol"].as_str() {
+            if let (Some(symbol), Some(price_str), Some(vol_str)) =
+                (obj["symbol"].as_str(), obj["last"].as_str(), obj["volValue"].as_str())
+            {
                 if !tradable.contains(symbol) { continue; }
                 if let Some((base, quote)) = symbol.split_once('-') {
-                    // parse price
-                    let price = parse_val(&obj["last"]).unwrap_or(0.0);
-                    if price <= 0.0 { continue; }
-
-                    // collect candidates: volValue (quote), vol (base)
-                    let mut vol_candidates: Vec<f64> = Vec::new();
-                    if let Some(qv) = parse_val(&obj["volValue"]) { vol_candidates.push(qv); }
-                    if let Some(bv) = parse_val(&obj["vol"]) { vol_candidates.push(bv * price); }
-                    // other possible fields
-                    if let Some(qv2) = parse_val(&obj["volValue24h"]) { vol_candidates.push(qv2); }
-
-                    let liquidity = vol_candidates.into_iter().fold(0.0_f64, |a, b| a.max(b));
-                    if liquidity > 0.0 {
-                        out.push(PairPrice {
-                            base: base.to_string(),
-                            quote: quote.to_string(),
-                            price,
-                            is_spot: true,
-                            liquidity,
-                        });
+                    if let (Ok(price), Ok(vol)) = (price_str.parse::<f64>(), vol_str.parse::<f64>()) {
+                        if price > 0.0 && vol > 0.0 {
+                            // KuCoin also only exposes 24h volume value (quote normalized)
+                            out.push(PairPrice {
+                                base: base.to_string(),
+                                quote: quote.to_string(),
+                                price,
+                                is_spot: true,
+                                liquidity: vol, // ✅ using volValue as high proxy
+                            });
+                        }
                     }
                 }
             }
@@ -184,39 +149,24 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
         .json().await
         .map_err(|e| format!("bybit decode tickers error: {}", e))?;
 
-    let parse_val = |v: &Value| -> Option<f64> {
-        if v.is_null() { return None; }
-        if let Some(f) = v.as_f64() { return Some(f); }
-        if let Some(s) = v.as_str() { return s.parse::<f64>().ok(); }
-        None
-    };
-
     let mut out = Vec::new();
     if let Some(arr) = resp["result"]["list"].as_array() {
         for obj in arr {
-            if let Some(symbol_val) = obj.get("symbol") {
-                let symbol = symbol_val.as_str().unwrap_or("").to_uppercase();
+            if let (Some(symbol), Some(price_str), Some(vol_str)) =
+                (obj.get("symbol"), obj.get("lastPrice"), obj.get("turnover24h")) // ✅ use turnover24h (better liquidity measure)
+            {
+                let symbol = symbol.as_str().unwrap().to_uppercase();
                 if let Some((base, quote)) = symbol_map.get(&symbol) {
-                    // parse price
-                    let price = parse_val(&obj["lastPrice"]).unwrap_or(0.0);
-                    if price <= 0.0 { continue; }
-
-                    // gather candidates: quoteVolume24h, volume (base), turnover24h etc.
-                    let mut vol_candidates: Vec<f64> = Vec::new();
-                    if let Some(qv) = parse_val(&obj["quoteVolume24h"]) { vol_candidates.push(qv); }
-                    if let Some(qv2) = parse_val(&obj["quoteVolume"]) { vol_candidates.push(qv2); }
-                    if let Some(bv) = parse_val(&obj["volume"]) { vol_candidates.push(bv * price); }
-                    if let Some(turn) = parse_val(&obj["turnover24h"]) { vol_candidates.push(turn); }
-
-                    let liquidity = vol_candidates.into_iter().fold(0.0_f64, |a, b| a.max(b));
-                    if liquidity > 0.0 {
-                        out.push(PairPrice {
-                            base: base.clone(),
-                            quote: quote.clone(),
-                            price,
-                            is_spot: true,
-                            liquidity,
-                        });
+                    if let (Ok(price), Ok(vol)) = (price_str.as_str().unwrap().parse::<f64>(), vol_str.as_str().unwrap().parse::<f64>()) {
+                        if price > 0.0 && vol > 0.0 {
+                            out.push(PairPrice {
+                                base: base.clone(),
+                                quote: quote.clone(),
+                                price,
+                                is_spot: true,
+                                liquidity: vol, // ✅ turnover24h is high value proxy
+                            });
+                        }
                     }
                 }
             }
@@ -265,37 +215,26 @@ pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
     let json: Vec<Value> = serde_json::from_str(&raw_tickers)
         .map_err(|e| format!("gateio decode tickers error: {}. First 100 chars: {}", e, &raw_tickers.chars().take(100).collect::<String>()))?;
 
-    let parse_val = |v: &Value| -> Option<f64> {
-        if v.is_null() { return None; }
-        if let Some(f) = v.as_f64() { return Some(f); }
-        if let Some(s) = v.as_str() { return s.parse::<f64>().ok(); }
-        None
-    };
-
     let mut out = Vec::new();
     for v in json {
-        if let Some(symbol) = v["currency_pair"].as_str() {
-            let symbol_up = symbol.to_uppercase();
-            if !tradable.contains(&symbol_up) { continue; }
-            if let Some(price) = parse_val(&v["last"]) {
-                if price <= 0.0 { continue; }
-
-                // collect candidates: quote_volume, base_volume, maybe turnover
-                let mut vol_candidates: Vec<f64> = Vec::new();
-                if let Some(qv) = parse_val(&v["quote_volume"]) { vol_candidates.push(qv); }
-                if let Some(bv) = parse_val(&v["base_volume"]) { vol_candidates.push(bv * price); }
-                if let Some(rate) = parse_val(&v["quoteVolume"]) { vol_candidates.push(rate); }
-
-                let liquidity = vol_candidates.into_iter().fold(0.0_f64, |a, b| a.max(b));
-                if liquidity > 0.0 {
-                    if let Some((base, quote)) = symbol_up.split_once('_') {
-                        out.push(PairPrice {
-                            base: base.to_string(),
-                            quote: quote.to_string(),
-                            price,
-                            is_spot: true,
-                            liquidity,
-                        });
+        if let (Some(symbol), Some(last_str), Some(vol_str)) =
+            (v["currency_pair"].as_str(), v["last"].as_str(), v["quote_volume"].as_str())
+        {
+            let symbol = symbol.to_uppercase();
+            if !tradable.contains(&symbol) { continue; }
+            if let Ok(price) = last_str.parse::<f64>() {
+                if price > 0.0 {
+                    let parts: Vec<&str> = symbol.split('_').collect();
+                    if parts.len() == 2 {
+                        if let Ok(vol) = vol_str.parse::<f64>() {
+                            out.push(PairPrice {
+                                base: parts[0].to_string(),
+                                quote: parts[1].to_string(),
+                                price,
+                                is_spot: true,
+                                liquidity: vol, // ✅ quote_volume is 24h turnover (proxy for high)
+                            });
+                        }
                     }
                 }
             }
@@ -316,4 +255,4 @@ pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, Strin
         "gate" | "gateio" => fetch_gateio(&client).await,
         _ => Err(format!("unsupported exchange: {}", exchange)),
     }
-                     }
+                }

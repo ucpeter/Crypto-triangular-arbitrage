@@ -3,6 +3,7 @@ use crate::utils::round2;
 use std::collections::{HashMap, HashSet};
 
 /// Scan triangles using given pair prices (spot only).
+/// ✅ Now uses 24h high liquidity values provided in PairPrice
 pub fn scan_triangles(
     prices: &[PairPrice],
     min_profit: f64,
@@ -23,7 +24,7 @@ pub fn scan_triangles(
         rate.insert((a.clone(), b.clone()), (p.price, p.liquidity));
         neighbors.entry(a.clone()).or_default().insert(b.clone());
 
-        // inverse (approx liquidity same as reported)
+        // inverse (approx liquidity same as reported high liquidity)
         rate.insert((b.clone(), a.clone()), (1.0 / p.price, p.liquidity));
         neighbors.entry(b.clone()).or_default().insert(a.clone());
     }
@@ -47,7 +48,7 @@ pub fn scan_triangles(
                         continue;
                     }
 
-                    // lookup rates + liquidity
+                    // lookup rates + high liquidity
                     let (r1, l1) = match rate.get(&(a.clone(), b.clone())) {
                         Some(v) => *v,
                         None => continue,
@@ -80,7 +81,7 @@ pub fn scan_triangles(
                         continue;
                     }
 
-                    // ✅ Use the 24h high liquidity reported by each leg
+                    // ✅ store leg liquidities and take minimum of high values
                     let leg_liqs = [l1, l2, l3];
                     let min_liq = leg_liqs.iter().cloned().fold(f64::INFINITY, f64::min);
 
@@ -91,7 +92,7 @@ pub fn scan_triangles(
                         trade_fees: round2(total_fee_percent),
                         profit_after_fees: round2(profit_after),
                         leg_liquidities: leg_liqs,
-                        min_liquidity: min_liq,
+                        min_liquidity: min_liq, // ✅ min of 24h high liquidity
                     });
                 }
             }
@@ -104,4 +105,5 @@ pub fn scan_triangles(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     out
-            }
+            }  
+            

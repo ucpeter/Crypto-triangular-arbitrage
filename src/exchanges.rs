@@ -8,7 +8,9 @@ use tracing::info;
 /// ---------------- Binance ----------------
 async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
     let info_url = "https://api.binance.com/api/v3/exchangeInfo";
-    let info: Value = client.get(info_url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+    let info: Value = client.get(info_url)
+        .send().await.map_err(|e| e.to_string())?
+        .json().await.map_err(|e| e.to_string())?;
     let mut symbol_map: HashMap<String, (String, String)> = HashMap::new();
 
     if let Some(arr) = info["symbols"].as_array() {
@@ -26,27 +28,61 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
         }
     }
 
-    // ✅ Use 24hr ticker for price + high liquidity
+    // ✅ Use 24hr ticker for price
     let price_url = "https://api.binance.com/api/v3/ticker/24hr";
-    let tickers: Value = client.get(price_url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+    let tickers: Value = client.get(price_url)
+        .send().await.map_err(|e| e.to_string())?
+        .json().await.map_err(|e| e.to_string())?;
 
     let mut out = Vec::new();
     if let Some(arr) = tickers.as_array() {
         for obj in arr {
-            if let (Some(symbol), Some(price_str), Some(vol_str)) =
-                (obj["symbol"].as_str(), obj["lastPrice"].as_str(), obj["quoteVolume"].as_str())
+            if let (Some(symbol), Some(price_str)) =
+                (obj["symbol"].as_str(), obj["lastPrice"].as_str())
             {
                 let symbol = symbol.to_uppercase();
                 if let Some((base, quote)) = symbol_map.get(&symbol) {
-                    if let (Ok(price), Ok(vol)) = (price_str.parse::<f64>(), vol_str.parse::<f64>()) {
-                        if price > 0.0 && vol > 0.0 {
-                            // Binance does not expose direct "high 24h volume", so keep quoteVolume as proxy
+                    if let Ok(price) = price_str.parse::<f64>() {
+                        if price <= 0.0 { continue; }
+
+                        // ✅ Fetch klines to compute 24h *high liquidity*
+                        let kline_url = format!(
+                            "https://api.binance.com/api/v3/klines?symbol={}&interval=1h&limit=24",
+                            symbol
+                        );
+                        let klines: Value = match client.get(&kline_url).send().await {
+                            Ok(resp) => match resp.json().await {
+                                Ok(json) => json,
+                                Err(_) => continue,
+                            },
+                            Err(_) => continue,
+                        };
+
+                        let mut high_liq = 0.0;
+                        if let Some(candles) = klines.as_array() {
+                            for candle in candles {
+                                if let (Some(vol_str), Some(close_str)) =
+                                    (candle[5].as_str(), candle[4].as_str())
+                                {
+                                    if let (Ok(vol), Ok(close)) =
+                                        (vol_str.parse::<f64>(), close_str.parse::<f64>())
+                                    {
+                                        let liq = vol * close; // USD liquidity in that hour
+                                        if liq > high_liq {
+                                            high_liq = liq;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if high_liq > 0.0 {
                             out.push(PairPrice {
                                 base: base.clone(),
                                 quote: quote.clone(),
                                 price,
                                 is_spot: true,
-                                liquidity: vol, // ✅ still 24h volume (normalized in quote asset)
+                                liquidity: high_liq, // ✅ use 24h high liquidity
                             });
                         }
                     }
@@ -55,7 +91,7 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
         }
     }
 
-    info!("binance returned {} pairs", out.len());
+    info!("binance returned {} pairs (with high 24h liquidity)", out.len());
     Ok(out)
 }
 
@@ -88,13 +124,12 @@ async fn fetch_kucoin(client: &Client) -> Result<Vec<PairPrice>, String> {
                 if let Some((base, quote)) = symbol.split_once('-') {
                     if let (Ok(price), Ok(vol)) = (price_str.parse::<f64>(), vol_str.parse::<f64>()) {
                         if price > 0.0 && vol > 0.0 {
-                            // KuCoin also only exposes 24h volume value (quote normalized)
                             out.push(PairPrice {
                                 base: base.to_string(),
                                 quote: quote.to_string(),
                                 price,
                                 is_spot: true,
-                                liquidity: vol, // ✅ using volValue as high proxy
+                                liquidity: vol,
                             });
                         }
                     }
@@ -153,7 +188,7 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
     if let Some(arr) = resp["result"]["list"].as_array() {
         for obj in arr {
             if let (Some(symbol), Some(price_str), Some(vol_str)) =
-                (obj.get("symbol"), obj.get("lastPrice"), obj.get("turnover24h")) // ✅ use turnover24h (better liquidity measure)
+                (obj.get("symbol"), obj.get("lastPrice"), obj.get("quoteVolume24h"))
             {
                 let symbol = symbol.as_str().unwrap().to_uppercase();
                 if let Some((base, quote)) = symbol_map.get(&symbol) {
@@ -164,7 +199,7 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
                                 quote: quote.clone(),
                                 price,
                                 is_spot: true,
-                                liquidity: vol, // ✅ turnover24h is high value proxy
+                                liquidity: vol,
                             });
                         }
                     }
@@ -232,7 +267,7 @@ pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
                                 quote: parts[1].to_string(),
                                 price,
                                 is_spot: true,
-                                liquidity: vol, // ✅ quote_volume is 24h turnover (proxy for high)
+                                liquidity: vol,
                             });
                         }
                     }
@@ -255,4 +290,4 @@ pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, Strin
         "gate" | "gateio" => fetch_gateio(&client).await,
         _ => Err(format!("unsupported exchange: {}", exchange)),
     }
-                }
+                                }

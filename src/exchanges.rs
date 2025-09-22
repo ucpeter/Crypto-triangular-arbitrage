@@ -2,7 +2,6 @@ use crate::models::PairPrice;
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::error::Error;
 use tokio_tungstenite::connect_async;
 use futures_util::{SinkExt, StreamExt};
 use tracing::info;
@@ -18,7 +17,6 @@ async fn fetch_binance(_client: &Client) -> Result<Vec<PairPrice>, String> {
 
     let (mut _write, mut read) = ws_stream.split();
 
-    // Read a single snapshot
     if let Some(msg) = read.next().await {
         let msg = msg.map_err(|e| format!("binance ws read error: {}", e))?;
         let text = msg.to_text().map_err(|e| format!("binance ws to_text error: {}", e))?;
@@ -26,18 +24,18 @@ async fn fetch_binance(_client: &Client) -> Result<Vec<PairPrice>, String> {
             .map_err(|e| format!("binance ws parse error: {}", e))?;
 
         let mut out = Vec::new();
+        let mut skipped = 0;
+
         if let Some(list) = arr.as_array() {
             for obj in list {
                 if let (Some(symbol), Some(price_str), Some(vol_str)) =
-                    (obj.get("s"), obj.get("c"), obj.get("q")) // ✅ lastPrice + quoteVolume (24h)
+                    (obj.get("s"), obj.get("c"), obj.get("q")) // ✅ lastPrice + 24h quoteVolume
                 {
                     let symbol = symbol.as_str().unwrap().to_uppercase();
                     let price = price_str.as_str().unwrap().parse::<f64>().unwrap_or(0.0);
                     let vol = vol_str.as_str().unwrap().parse::<f64>().unwrap_or(0.0);
 
                     if price > 0.0 && vol > 0.0 {
-                        // Split symbol into base/quote is tricky without /info — fallback to heuristics
-                        // For now assume common suffixes
                         let known_quotes = ["USDT", "USDC", "BTC", "ETH", "BNB"];
                         let mut base = symbol.clone();
                         let mut quote = "UNKNOWN".to_string();
@@ -54,13 +52,15 @@ async fn fetch_binance(_client: &Client) -> Result<Vec<PairPrice>, String> {
                             quote,
                             price,
                             is_spot: true,
-                            liquidity: vol, // ✅ 24h quote volume
+                            liquidity: vol,
                         });
+                    } else {
+                        skipped += 1;
                     }
                 }
             }
         }
-        info!("binance returned {} pairs", out.len());
+        info!("binance returned {} pairs, skipped {}", out.len(), skipped);
         return Ok(out);
     }
 
@@ -87,12 +87,14 @@ async fn fetch_kucoin(client: &Client) -> Result<Vec<PairPrice>, String> {
     let resp: Value = client.get(url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
 
     let mut out = Vec::new();
+    let mut skipped = 0;
+
     if let Some(arr) = resp["data"]["ticker"].as_array() {
         for obj in arr {
             if let (Some(symbol), Some(price_str), Some(vol_str)) =
-                (obj["symbol"].as_str(), obj["last"].as_str(), obj["volValue"].as_str()) // ✅ volValue = quote volume (24h)
+                (obj["symbol"].as_str(), obj["last"].as_str(), obj["volValue"].as_str()) // ✅ 24h quote volume
             {
-                if !tradable.contains(symbol) { continue; }
+                if !tradable.contains(symbol) { skipped += 1; continue; }
                 if let Some((base, quote)) = symbol.split_once('-') {
                     if let (Ok(price), Ok(vol)) = (price_str.parse::<f64>(), vol_str.parse::<f64>()) {
                         if price > 0.0 && vol > 0.0 {
@@ -103,6 +105,8 @@ async fn fetch_kucoin(client: &Client) -> Result<Vec<PairPrice>, String> {
                                 is_spot: true,
                                 liquidity: vol,
                             });
+                        } else {
+                            skipped += 1;
                         }
                     }
                 }
@@ -110,7 +114,7 @@ async fn fetch_kucoin(client: &Client) -> Result<Vec<PairPrice>, String> {
         }
     }
 
-    info!("kucoin returned {} pairs", out.len());
+    info!("kucoin returned {} pairs, skipped {}", out.len(), skipped);
     Ok(out)
 }
 
@@ -155,10 +159,12 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
         .map_err(|e| format!("bybit decode tickers error: {}", e))?;
 
     let mut out = Vec::new();
+    let mut skipped = 0;
+
     if let Some(arr) = resp["result"]["list"].as_array() {
         for obj in arr {
             if let (Some(symbol), Some(price_str), Some(vol_str)) =
-                (obj.get("symbol"), obj.get("lastPrice"), obj.get("quoteVolume24h")) // ✅ quoteVolume24h
+                (obj.get("symbol"), obj.get("lastPrice"), obj.get("quoteVolume24h")) // ✅ 24h quote volume
             {
                 let symbol = symbol.as_str().unwrap().to_uppercase();
                 if let Some((base, quote)) = symbol_map.get(&symbol) {
@@ -171,6 +177,8 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
                                 is_spot: true,
                                 liquidity: vol,
                             });
+                        } else {
+                            skipped += 1;
                         }
                     }
                 }
@@ -178,7 +186,7 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
         }
     }
 
-    info!("bybit returned {} filtered spot pairs", out.len());
+    info!("bybit returned {} pairs, skipped {}", out.len(), skipped);
     Ok(out)
 }
 
@@ -221,12 +229,14 @@ pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
         .map_err(|e| format!("gateio decode tickers error: {}. First 100 chars: {}", e, &raw_tickers.chars().take(100).collect::<String>()))?;
 
     let mut out = Vec::new();
+    let mut skipped = 0;
+
     for v in json {
         if let (Some(symbol), Some(last_str), Some(vol_str)) =
-            (v["currency_pair"].as_str(), v["last"].as_str(), v["quote_volume"].as_str()) // ✅ quote_volume
+            (v["currency_pair"].as_str(), v["last"].as_str(), v["quote_volume"].as_str()) // ✅ 24h quote volume
         {
             let symbol = symbol.to_uppercase();
-            if !tradable.contains(&symbol) { continue; }
+            if !tradable.contains(&symbol) { skipped += 1; continue; }
             if let Ok(price) = last_str.parse::<f64>() {
                 if price > 0.0 {
                     let parts: Vec<&str> = symbol.split('_').collect();
@@ -239,6 +249,8 @@ pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
                                 is_spot: true,
                                 liquidity: vol,
                             });
+                        } else {
+                            skipped += 1;
                         }
                     }
                 }
@@ -246,7 +258,7 @@ pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {
         }
     }
 
-    info!("gateio returned {} spot pairs", out.len());
+    info!("gateio returned {} pairs, skipped {}", out.len(), skipped);
     Ok(out)
 }
 
@@ -260,4 +272,4 @@ pub async fn fetch_exchange_data(exchange: &str) -> Result<Vec<PairPrice>, Strin
         "gate" | "gateio" => fetch_gateio(&client).await,
         _ => Err(format!("unsupported exchange: {}", exchange)),
     }
-                    }
+    }

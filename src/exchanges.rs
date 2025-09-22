@@ -64,7 +64,7 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
         let msg = msg.map_err(|e| format!("binance ws read error: {}", e))?;
         let text = msg.to_text().map_err(|e| format!("binance ws to_text error: {}", e))?;
         let arr: Value =
-            serde_json::from_str(text.as_str()).map_err(|e| format!("binance ws parse error: {}", e))?;
+            serde_json::from_str(text).map_err(|e| format!("binance ws parse error: {}", e))?;
 
         if let Some(list) = arr.as_array() {
             for obj in list {

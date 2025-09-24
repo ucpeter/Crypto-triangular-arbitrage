@@ -1,7 +1,7 @@
 use crate::models::PairPrice;
 use reqwest::Client;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio_tungstenite::connect_async;
 use futures_util::StreamExt;
 use tracing::info;

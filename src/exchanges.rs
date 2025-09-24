@@ -240,15 +240,12 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
                     obj.get("quoteCoin"),
                     obj.get("symbol"),
                 ) {
-                    let quote = quote.as_str().unwrap().to_uppercase();
+                    let base = base.as_str().unwrap_or("").to_uppercase();
+                    let quote = quote.as_str().unwrap_or("").to_uppercase();
+                    let symbol = symbol.as_str().unwrap_or("").to_uppercase();
+
                     if ["USDT", "USDC", "BTC", "ETH"].contains(&quote.as_str()) {
-                        symbol_map.insert(
-                            symbol.as_str().unwrap().to_uppercase(),
-                            (
-                                base.as_str().unwrap().to_uppercase(),
-                                quote,
-                            ),
-                        );
+                        symbol_map.insert(symbol, (base, quote));
                     } else {
                         info_skipped += 1;
                     }
@@ -277,17 +274,30 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
     let mut ws_skipped = 0usize;
 
     if let Some(arr) = resp["result"]["list"].as_array() {
+        // log the first 3 tickers for debugging
+        for (i, obj) in arr.iter().enumerate() {
+            if i < 3 {
+                info!("bybit sample ticker {}: {}", i, obj);
+            }
+        }
+
         for obj in arr {
             ws_total += 1;
-            if let (Some(symbol_v), Some(price_v), Some(vol_v)) =
-                (obj.get("symbol"), obj.get("lastPrice"), obj.get("quoteVolume24h"))
+            if let (Some(symbol_v), Some(price_v)) =
+                (obj.get("symbol"), obj.get("lastPrice"))
             {
-                let symbol = symbol_v.as_str().unwrap().to_uppercase();
-                if let Some((base, quote)) = symbol_map.get(&symbol) {
-                    if let (Ok(price), Ok(vol)) = (
-                        price_v.as_str().unwrap().parse::<f64>(),
-                        vol_v.as_str().unwrap().parse::<f64>(),
-                    ) {
+                let symbol = symbol_v.as_str().unwrap_or("").to_uppercase();
+
+                // pick liquidity field with fallback
+                let vol_str = obj.get("quoteVolume24h")
+                    .or_else(|| obj.get("turnover24h"))
+                    .or_else(|| obj.get("volume24h"));
+
+                if let Some(vol_v) = vol_str {
+                    if let Some((base, quote)) = symbol_map.get(&symbol) {
+                        let price = price_v.as_str().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
+                        let vol = vol_v.as_str().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
+
                         if price > 0.0 && vol > 0.0 {
                             out.push(PairPrice {
                                 base: base.clone(),
@@ -321,7 +331,9 @@ pub async fn fetch_bybit(client: &Client) -> Result<Vec<PairPrice>, String> {
     );
 
     Ok(out)
-}
+                }
+
+
 
 /// ----------------- GATE.IO -----------------
 pub async fn fetch_gateio(_client: &Client) -> Result<Vec<PairPrice>, String> {

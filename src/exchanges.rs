@@ -7,11 +7,13 @@ use tokio_tungstenite::connect_async;
 use futures_util::StreamExt;
 use tracing::info;
 
+use tokio::time::{timeout, Duration};
+
 /// ---------------- Binance (REST + WebSocket snapshot) ----------------
 async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
     info!("fetching binance via websocket snapshot + exchangeInfo");
 
-    // 1) exchangeInfo via REST to build accurate symbol -> (base,quote) map
+    // 1) exchangeInfo (REST) for mapping
     let info_url = "https://api.binance.com/api/v3/exchangeInfo";
     let info_json: Value = client
         .get(info_url)
@@ -23,12 +25,8 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
         .map_err(|e| format!("binance exchangeInfo decode error: {}", e))?;
 
     let mut symbol_map: HashMap<String, (String, String)> = HashMap::new();
-    let mut info_total = 0usize;
-    let mut info_skipped = 0usize;
-
     if let Some(arr) = info_json["symbols"].as_array() {
         for s in arr {
-            info_total += 1;
             if s["status"] == "TRADING" && s["isSpotTradingAllowed"] == true {
                 if let (Some(sym), Some(base), Some(quote)) = (
                     s["symbol"].as_str(),
@@ -39,16 +37,12 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
                         sym.to_uppercase(),
                         (base.to_uppercase(), quote.to_uppercase()),
                     );
-                } else {
-                    info_skipped += 1;
                 }
-            } else {
-                info_skipped += 1;
             }
         }
     }
 
-    // 2) WS snapshot for prices + 24h quote volume
+    // 2) Connect WS
     let stream_url = "wss://stream.binance.com:9443/ws/!ticker@arr";
     let (ws_stream, _) = connect_async(stream_url)
         .await
@@ -59,60 +53,67 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
     let mut ws_total = 0usize;
     let mut ws_skipped = 0usize;
 
-    // read single snapshot
-    if let Some(msg) = read.next().await {
-        let msg = msg.map_err(|e| format!("binance ws read error: {}", e))?;
-        let text = msg.to_text().map_err(|e| format!("binance ws to_text error: {}", e))?;
-        let arr: Value = serde_json::from_str(text)
-            .map_err(|e| format!("binance ws parse error: {}", e))?;
-
-        if let Some(list) = arr.as_array() {
-            for obj in list {
-                ws_total += 1;
-                // fields: "s" = symbol, "c" = lastPrice, "q" = quoteVolume (24h)
-                if let (Some(sv), Some(pv), Some(qv)) =
-                    (obj.get("s"), obj.get("c"), obj.get("q"))
-                {
-                    let symbol = sv.as_str().unwrap_or("").to_uppercase();
-                    if let Some((base, quote)) = symbol_map.get(&symbol) {
-                        let price = pv.as_str().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
-                        let vol = qv.as_str().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
-
-                        if price > 0.0 && vol > 0.0 {
-                            out.push(PairPrice {
-                                base: base.clone(),
-                                quote: quote.clone(),
-                                price,
-                                is_spot: true,
-                                liquidity: vol, // 24h quoteVolume
-                            });
-                        } else {
-                            ws_skipped += 1;
+    // ⏳ Collect messages for 20s
+    let duration = Duration::from_secs(20);
+    let collect_result = timeout(duration, async {
+        while let Some(msg) = read.next().await {
+            let msg = match msg {
+                Ok(m) => m,
+                Err(e) => {
+                    info!("binance ws read error: {}", e);
+                    continue;
+                }
+            };
+            if let Ok(text) = msg.to_text() {
+                if let Ok(arr) = serde_json::from_str::<Value>(text) {
+                    if let Some(list) = arr.as_array() {
+                        for obj in list {
+                            ws_total += 1;
+                            if let (Some(sv), Some(pv), Some(qv)) =
+                                (obj.get("s"), obj.get("c"), obj.get("q"))
+                            {
+                                let symbol = sv.as_str().unwrap_or("").to_uppercase();
+                                if let Some((base, quote)) = symbol_map.get(&symbol) {
+                                    let price = pv.as_str().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
+                                    let vol = qv.as_str().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
+                                    if price > 0.0 && vol > 0.0 {
+                                        out.push(PairPrice {
+                                            base: base.clone(),
+                                            quote: quote.clone(),
+                                            price,
+                                            is_spot: true,
+                                            liquidity: vol,
+                                        });
+                                    } else {
+                                        ws_skipped += 1;
+                                    }
+                                } else {
+                                    ws_skipped += 1;
+                                }
+                            } else {
+                                ws_skipped += 1;
+                            }
                         }
-                    } else {
-                        ws_skipped += 1;
                     }
-                } else {
-                    ws_skipped += 1;
                 }
             }
         }
-    } else {
-        return Err("binance ws no snapshot received".to_string());
+    })
+    .await;
+
+    if collect_result.is_err() {
+        info!("binance ws: stopped after 20s collection window");
     }
 
     info!(
-        "binance: exchangeInfo_total={} info_skipped={} ws_total={} ws_skipped={} returned={}",
-        info_total,
-        info_skipped,
+        "binance (20s): ws_total={} ws_skipped={} returned={}",
         ws_total,
         ws_skipped,
         out.len()
     );
 
     Ok(out)
-                            }
-
+                }
 
 
 /// ---------------- KuCoin ----------------

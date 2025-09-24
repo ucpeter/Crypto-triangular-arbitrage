@@ -29,7 +29,7 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
     if let Some(arr) = info_json["symbols"].as_array() {
         for s in arr {
             info_total += 1;
-            if s["status"] == "TRADING" {
+            if s["status"] == "TRADING" && s["isSpotTradingAllowed"] == true {
                 if let (Some(sym), Some(base), Some(quote)) = (
                     s["symbol"].as_str(),
                     s["baseAsset"].as_str(),
@@ -52,19 +52,19 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
     let stream_url = "wss://stream.binance.com:9443/ws/!ticker@arr";
     let (ws_stream, _) = connect_async(stream_url)
         .await
-        .map_err(|e| format!("binance ws connect error: {} (ensure tokio-tungstenite TLS feature)", e))?;
+        .map_err(|e| format!("binance ws connect error: {}", e))?;
     let (_write, mut read) = ws_stream.split();
 
-    // read single snapshot
     let mut out: Vec<PairPrice> = Vec::new();
     let mut ws_total = 0usize;
     let mut ws_skipped = 0usize;
 
+    // read single snapshot
     if let Some(msg) = read.next().await {
         let msg = msg.map_err(|e| format!("binance ws read error: {}", e))?;
         let text = msg.to_text().map_err(|e| format!("binance ws to_text error: {}", e))?;
-        let arr: Value =
-            serde_json::from_str(text).map_err(|e| format!("binance ws parse error: {}", e))?;
+        let arr: Value = serde_json::from_str(text)
+            .map_err(|e| format!("binance ws parse error: {}", e))?;
 
         if let Some(list) = arr.as_array() {
             for obj in list {
@@ -77,13 +77,14 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
                     if let Some((base, quote)) = symbol_map.get(&symbol) {
                         let price = pv.as_str().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
                         let vol = qv.as_str().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
+
                         if price > 0.0 && vol > 0.0 {
                             out.push(PairPrice {
                                 base: base.clone(),
                                 quote: quote.clone(),
                                 price,
                                 is_spot: true,
-                                liquidity: vol,
+                                liquidity: vol, // 24h quoteVolume
                             });
                         } else {
                             ws_skipped += 1;
@@ -101,7 +102,7 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
     }
 
     info!(
-        "binance: exchange_info_total={} info_skipped={} ws_tickers_total={} ws_tickers_skipped={} returned={}",
+        "binance: exchangeInfo_total={} info_skipped={} ws_total={} ws_skipped={} returned={}",
         info_total,
         info_skipped,
         ws_total,
@@ -110,7 +111,9 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
     );
 
     Ok(out)
-}
+                            }
+
+
 
 /// ---------------- KuCoin ----------------
 async fn fetch_kucoin(client: &Client) -> Result<Vec<PairPrice>, String> {

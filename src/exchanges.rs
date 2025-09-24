@@ -1,19 +1,17 @@
 use crate::models::PairPrice;
 use reqwest::Client;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
-use std::error::Error;
+use std::collections::HashMap;
 use tokio_tungstenite::connect_async;
 use futures_util::StreamExt;
 use tracing::info;
-
 use tokio::time::{timeout, Duration};
 
-/// ---------------- Binance (REST + WebSocket snapshot) ----------------
+/// ---------------- Binance (Hybrid: WS + REST fallback) ----------------
 async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
-    info!("fetching binance via websocket snapshot + exchangeInfo");
+    info!("fetching binance via websocket (20s) + REST backfill");
 
-    // 1) exchangeInfo (REST) for mapping
+    // 1) exchangeInfo for base/quote mapping
     let info_url = "https://api.binance.com/api/v3/exchangeInfo";
     let info_json: Value = client
         .get(info_url)
@@ -27,7 +25,7 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
     let mut symbol_map: HashMap<String, (String, String)> = HashMap::new();
     if let Some(arr) = info_json["symbols"].as_array() {
         for s in arr {
-            if s["status"] == "TRADING" && s["isSpotTradingAllowed"] == true {
+            if s["status"] == "TRADING" {
                 if let (Some(sym), Some(base), Some(quote)) = (
                     s["symbol"].as_str(),
                     s["baseAsset"].as_str(),
@@ -41,57 +39,50 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
             }
         }
     }
+    let total_symbols = symbol_map.len();
 
-    // 2) Connect WS
+    // 2) WS snapshot stream (20s)
     let stream_url = "wss://stream.binance.com:9443/ws/!ticker@arr";
     let (ws_stream, _) = connect_async(stream_url)
         .await
         .map_err(|e| format!("binance ws connect error: {}", e))?;
     let (_write, mut read) = ws_stream.split();
 
-    let mut out: Vec<PairPrice> = Vec::new();
-    let mut ws_total = 0usize;
-    let mut ws_skipped = 0usize;
+    let mut pairs: HashMap<String, PairPrice> = HashMap::new();
+    let mut ws_messages = 0usize;
 
-    // ⏳ Collect messages for 20s
-    let duration = Duration::from_secs(20);
-    let collect_result = timeout(duration, async {
+    let ws_result = timeout(Duration::from_secs(20), async {
         while let Some(msg) = read.next().await {
-            let msg = match msg {
-                Ok(m) => m,
-                Err(e) => {
-                    info!("binance ws read error: {}", e);
-                    continue;
-                }
-            };
-            if let Ok(text) = msg.to_text() {
-                if let Ok(arr) = serde_json::from_str::<Value>(text) {
-                    if let Some(list) = arr.as_array() {
-                        for obj in list {
-                            ws_total += 1;
-                            if let (Some(sv), Some(pv), Some(qv)) =
-                                (obj.get("s"), obj.get("c"), obj.get("q"))
-                            {
-                                let symbol = sv.as_str().unwrap_or("").to_uppercase();
-                                if let Some((base, quote)) = symbol_map.get(&symbol) {
-                                    let price = pv.as_str().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
-                                    let vol = qv.as_str().unwrap_or("0").parse::<f64>().unwrap_or(0.0);
-                                    if price > 0.0 && vol > 0.0 {
-                                        out.push(PairPrice {
-                                            base: base.clone(),
-                                            quote: quote.clone(),
-                                            price,
-                                            is_spot: true,
-                                            liquidity: vol,
-                                        });
-                                    } else {
-                                        ws_skipped += 1;
+            ws_messages += 1;
+            if let Ok(msg) = msg {
+                if let Ok(text) = msg.to_text() {
+                    if let Ok(arr) = serde_json::from_str::<Value>(text) {
+                        if let Some(list) = arr.as_array() {
+                            for obj in list {
+                                if let (Some(sv), Some(pv), Some(qv)) =
+                                    (obj.get("s"), obj.get("c"), obj.get("q"))
+                                {
+                                    let symbol = sv.as_str().unwrap_or("").to_uppercase();
+                                    if let Some((base, quote)) = symbol_map.get(&symbol) {
+                                        if let (Ok(price), Ok(vol)) = (
+                                            pv.as_str().unwrap_or("0").parse::<f64>(),
+                                            qv.as_str().unwrap_or("0").parse::<f64>(),
+                                        ) {
+                                            if price > 0.0 && vol > 0.0 {
+                                                pairs.insert(
+                                                    symbol.clone(),
+                                                    PairPrice {
+                                                        base: base.clone(),
+                                                        quote: quote.clone(),
+                                                        price,
+                                                        is_spot: true,
+                                                        liquidity: vol,
+                                                    },
+                                                );
+                                            }
+                                        }
                                     }
-                                } else {
-                                    ws_skipped += 1;
                                 }
-                            } else {
-                                ws_skipped += 1;
                             }
                         }
                     }
@@ -101,18 +92,66 @@ async fn fetch_binance(client: &Client) -> Result<Vec<PairPrice>, String> {
     })
     .await;
 
-    if collect_result.is_err() {
-        info!("binance ws: stopped after 20s collection window");
+    if ws_result.is_err() {
+        info!("binance ws collection stopped after 20s timeout");
+    }
+
+    let ws_pairs = pairs.len();
+
+    // 3) REST fallback for missing pairs
+    let rest_url = "https://api.binance.com/api/v3/ticker/24hr";
+    let rest_json: Value = client
+        .get(rest_url)
+        .send()
+        .await
+        .map_err(|e| format!("binance REST ticker error: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("binance REST ticker decode error: {}", e))?;
+
+    let mut rest_added = 0usize;
+    if let Some(arr) = rest_json.as_array() {
+        for obj in arr {
+            if let (Some(sym), Some(price_str), Some(vol_str)) =
+                (obj.get("symbol"), obj.get("lastPrice"), obj.get("quoteVolume"))
+            {
+                let symbol = sym.as_str().unwrap_or("").to_uppercase();
+                if !pairs.contains_key(&symbol) {
+                    if let Some((base, quote)) = symbol_map.get(&symbol) {
+                        if let (Ok(price), Ok(vol)) =
+                            (price_str.as_str().unwrap_or("0").parse::<f64>(),
+                             vol_str.as_str().unwrap_or("0").parse::<f64>())
+                        {
+                            if price > 0.0 && vol > 0.0 {
+                                pairs.insert(
+                                    symbol.clone(),
+                                    PairPrice {
+                                        base: base.clone(),
+                                        quote: quote.clone(),
+                                        price,
+                                        is_spot: true,
+                                        liquidity: vol,
+                                    },
+                                );
+                                rest_added += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     info!(
-        "binance (20s): ws_total={} ws_skipped={} returned={}",
-        ws_total,
-        ws_skipped,
-        out.len()
+        "binance: total_symbols={} ws_messages={} ws_pairs={} rest_added={} final_pairs={}",
+        total_symbols,
+        ws_messages,
+        ws_pairs,
+        rest_added,
+        pairs.len()
     );
 
-    Ok(out)
+    Ok(pairs.into_values().collect())
                 }
 
 

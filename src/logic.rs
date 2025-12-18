@@ -3,12 +3,15 @@ use crate::utils::round2;
 use std::collections::{HashMap, HashSet};
 
 /// Scan triangles using given pair prices (spot only).
-/// ✅ Now uses 24h high liquidity values provided in PairPrice
+/// Uses last price (not bid/ask) by design.
+/// Applies floating-point tolerance to avoid false zero-profit rejection.
 pub fn scan_triangles(
     prices: &[PairPrice],
     min_profit: f64,
     fee_per_leg: f64,
 ) -> Vec<TriangularResult> {
+    const EPS: f64 = 1e-6;
+
     let mut rate: HashMap<(String, String), (f64, f64)> = HashMap::new(); // (price, liquidity)
     let mut neighbors: HashMap<String, HashSet<String>> = HashMap::new();
 
@@ -24,14 +27,15 @@ pub fn scan_triangles(
         rate.insert((a.clone(), b.clone()), (p.price, p.liquidity));
         neighbors.entry(a.clone()).or_default().insert(b.clone());
 
-        // inverse (approx liquidity same as reported high liquidity)
+        // inverse (approximate, acceptable for signal scanning)
         rate.insert((b.clone(), a.clone()), (1.0 / p.price, p.liquidity));
         neighbors.entry(b.clone()).or_default().insert(a.clone());
     }
 
     let mut seen: HashSet<(String, String, String)> = HashSet::new();
     let mut out: Vec<TriangularResult> = Vec::new();
-    let fee_mult_one = 1.0 - (fee_per_leg / 100.0);
+
+    let fee_mult = 1.0 - (fee_per_leg / 100.0);
     let total_fee_percent = 3.0 * fee_per_leg;
 
     for (a, bs) in &neighbors {
@@ -39,16 +43,17 @@ pub fn scan_triangles(
             if a == b {
                 continue;
             }
+
             if let Some(cs) = neighbors.get(b) {
                 for c in cs {
                     if c == a || c == b {
                         continue;
                     }
+
                     if !neighbors.get(c).map_or(false, |s| s.contains(a)) {
                         continue;
                     }
 
-                    // lookup rates + high liquidity
                     let (r1, l1) = match rate.get(&(a.clone(), b.clone())) {
                         Some(v) => *v,
                         None => continue,
@@ -63,13 +68,20 @@ pub fn scan_triangles(
                     };
 
                     let gross = r1 * r2 * r3;
-                    let profit_before = (gross - 1.0) * 100.0;
-                    if !profit_before.is_finite() || profit_before < min_profit {
+                    if !gross.is_finite() {
                         continue;
                     }
 
-                    let net = (r1 * fee_mult_one) * (r2 * fee_mult_one) * (r3 * fee_mult_one);
+                    // apply fees multiplicatively
+                    let net = gross * fee_mult.powi(3);
                     let profit_after = (net - 1.0) * 100.0;
+
+                    // 🔴 FIX: EPS-tolerant comparison on post-fee profit
+                    if !profit_after.is_finite() || profit_after + EPS < min_profit {
+                        continue;
+                    }
+
+                    let profit_before = (gross - 1.0) * 100.0;
 
                     let reps = vec![
                         (a.clone(), b.clone(), c.clone()),
@@ -81,7 +93,6 @@ pub fn scan_triangles(
                         continue;
                     }
 
-                    // ✅ store leg liquidities and take minimum of high values
                     let leg_liqs = [l1, l2, l3];
                     let min_liq = leg_liqs.iter().cloned().fold(f64::INFINITY, f64::min);
 
@@ -92,7 +103,7 @@ pub fn scan_triangles(
                         trade_fees: round2(total_fee_percent),
                         profit_after_fees: round2(profit_after),
                         leg_liquidities: leg_liqs,
-                        min_liquidity: min_liq, // ✅ min of 24h high liquidity
+                        min_liquidity: min_liq,
                     });
                 }
             }
@@ -104,6 +115,6 @@ pub fn scan_triangles(
             .partial_cmp(&x.profit_after_fees)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
+
     out
-            }  
-            
+    }
